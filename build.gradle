@@ -1,0 +1,47 @@
+plugins {
+    id 'java'
+    id 'groovy'
+    id 'application'
+}
+
+sourceCompatibility = 1.8
+version = '0.1'
+
+project.ext {
+    springVersion = '4.3.12.RELEASE'
+}
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+    jcenter()
+}
+
+dependencies {
+    compileOnly "org.slf4j:slf4j-api:1.7.25"
+    compileOnly "org.slf4j:jcl-over-slf4j:1.7.25"
+    compileOnly "org.slf4j:jul-to-slf4j:1.7.25"
+    compileOnly "org.slf4j:log4j-over-slf4j:1.7.25"
+
+    compileOnly "javax.servlet:javax.servlet-api:3.1.0"
+    compileOnly "javax.websocket:javax.websocket-api:1.1"
+    compileOnly "javax.validation:validation-api:2.0.1.Final"
+
+    compileOnly "org.springframework:spring-context:${springVersion}"
+    compileOnly "org.springframework:spring-jdbc:${springVersion}"
+    compileOnly "org.springframework:spring-jms:${springVersion}"
+    compileOnly "org.springframework:spring-webmvc:${springVersion}"
+
+    compileOnly "com.fasterxml.jackson.core:jackson-core:2.8.8"
+    compileOnly "com.fasterxml.jackson.core:jackson-databind:2.8.8"
+    compileOnly "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.8.8"
+
+    compileOnly "javax.inject:javax.inject:1"
+    compileOnly "org.apache.commons:commons-lang3:3.5"
+    compileOnly "net.sf.jopt-simple:jopt-simple:5.0.3"
+    compileOnly "commons-io:commons-io:2.5"
+    compileOnly "org.apache.commons:commons-collections4:4.1"
+    compileOnly "commons-codec:commons-codec:1.9"
+
+}
+
