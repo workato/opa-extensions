@@ -8,7 +8,7 @@ Extension mechanism is enabled by adding the `extensions` section to the config 
 
 ```yml
     server:
-      extensions_classpath: C:\\Program Files\\Workato Agent\\ext
+      classpath: C:\\Program Files\\Workato Agent\\ext
     extensions:
       ldap:
         controllerClass: com.mycompany.ldap.LdapController
@@ -66,5 +66,4 @@ Steps to build an extension:
 1. Install the latest Java 8 SDK
 1. Use `./gradlew jar` command to bootstrap Gradle and build the project.
 1. The output is in `build/libs`.
-
 

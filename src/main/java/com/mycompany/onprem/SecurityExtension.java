@@ -24,7 +24,7 @@ public class SecurityExtension {
     @Inject
     private Environment env;
 
-    @RequestMapping(method = RequestMethod.POST)
+    @RequestMapping(path = "/computeDigest", method = RequestMethod.POST)
     public @ResponseBody Map<String, Object> computeDigest(@RequestBody Map<String, Object> body) throws Exception {
         Charset encoding = Charset.forName("UTF-8");
         String payload = (String) body.get("payload");
