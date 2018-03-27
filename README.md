@@ -10,17 +10,15 @@ Extension mechanism is enabled by adding the `extensions` section to the config 
     server:
       extensions_classpath: C:\\Program Files\\Workato Agent\\ext
     extensions:
-      ldap:
-        controllerClass: com.mycompany.ldap.LdapController
-        host: ldap.mycompany.intra
-          ...
+      security:
+        controllerClass: com.mycompany.onprem.SecurityExtension
+        secret: HA63A3043AMMMM
 ```
 
 Individual endpoints are defined inside `extensions`, where every key serves as _endpoint name_. Every _endpoint name_ has to be valid identifier, has to be URL-friendly and cannot contain any special characters (like whitespace, etc.).
 
 Classpath defines a set of folders/JAR files containing compiled extensions.
 
-**NOTE:** extension classpath also applies to loading custom JDBC drivers.
 
 ## Using extension endpoints
 
@@ -28,43 +26,72 @@ Every endpoint is hosted inside the REST-compliant URL: `/ext/<endpointName>/<re
 
 Endpoint request handling logic is defined by Spring REST controller class, provided as `controllerClass` property. This controller class is registered inside an endpoint-specific Spring `WebApplicationContext` and allows retrieving configuration properties from the `config.yml` file.
 
-**NOTE:** the agent port may vary depending on configuration. To use endpoints externally user has to pin-down port number, eg. by command-line option or configuration property.
-
 ## Endpoint controller sample
 
+Full code can be found here: https://github.com/workato/opa-extensions/blob/master/src/main/java/com/mycompany/onprem/SecurityExtension.java
+
 ```java
-    package com.mycompany.hello;
+package com.mycompany.onprem;
 
-    import ...
+// import rest of the packages here:
+@Controller
+public class SecurityExtension {
 
-    @Controller
-    public class HelloWorld {
+    @Inject
+    private Environment env;
 
-        @Inject
-        private Environment env;
-
-        @RequestMapping(method = RequestMethod.GET)
-        public @ResponseBody List<Object> hello() {
-            return Arrays.asList(env.getProperty("myConfigProperty"));
-        }
+    @RequestMapping(method = RequestMethod.POST)
+    public @ResponseBody Map<String, Object> computeDigest(@RequestBody Map<String, Object> body) throws Exception {
+        Charset encoding = Charset.forName("UTF-8");
+        String payload = (String) body.get("payload");
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        digest.update(env.getProperty("secret").getBytes(encoding));
+        byte[] result = digest.digest(payload.getBytes(encoding));
+        return Collections.singletonMap("signature", Hex.encodeHexString(result));
     }
+}
 ```
 
 Given the configuration:
 
 ```yml
     extensions:
-      hello:
-        controllerClass: com.mycompany.hello.HelloWorld
-        myConfigProperty: myConfigValue
- ```
+      security:
+        controllerClass: com.mycompany.onprem.SecurityExtension
+        secret: HA63A3043AMMMM 
+```
 
 ## Building extension
 
 Steps to build an extension:
 
 1. Install the latest Java 8 SDK
-1. Use `./gradlew jar` command to bootstrap Gradle and build the project.
-1. The output is in `build/libs`.
+2. Use `./gradlew jar` command to bootstrap Gradle and build the project.
+3. The output is in `build/libs`.
 
+## Installing the extension to OPA
+
+1. Add a new directory called `ext` under Workato agent install directory.
+2. Copy the extension JAR file to `ext` directory.
+3. Update the `config/config.yml` to add the `ext` file to class path.
+
+```yml
+    server:
+      extensions_classpath: C:\\Program Files\\Workato Agent\\ext
+```
+
+4. Update the `config/config.yml` to configure the new extension.
+
+```yml
+    extensions:
+      security:
+        controllerClass: com.mycompany.onprem.SecurityExtension
+        secret: HA63A3043AMMMM
+```
+
+
+## Using the extension in Recipe
+
+In order to use the extension in a recipe, we need a custom adapter in Workato. Sample adapter for the extension 
+can be found [here][https://github.com/workato/connector_sdk/blob/master/basic_auth/onprem_security.rb]
 
