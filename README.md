@@ -77,7 +77,7 @@ Steps to build an extension:
 
 ```yml
     server:
-      extensions_classpath: C:\\Program Files\\Workato Agent\\ext
+      classpath: C:\\Program Files\\Workato Agent\\ext
 ```
 
 4. Update the `config/config.yml` to configure the new extension.
@@ -106,7 +106,7 @@ can be found [here](https://github.com/workato/connector_sdk/blob/master/basic_a
   },
 
   test: ->(connection) {
-    post("http://localhost/ext/#{connection['profile']}", { payload: 'test' }).headers('X-Workato-Connector': 'enforce')
+    post("http://localhost/ext/#{connection['profile']}/computeDigest", { payload: 'test' }).headers('X-Workato-Connector': 'enforce')
   },
 
   actions: {
@@ -119,7 +119,7 @@ can be found [here](https://github.com/workato/connector_sdk/blob/master/basic_a
       output_fields: ->(_) { [{name: 'signature'}] },
 
       execute: ->(connection, input) {
-        post("http://localhost/ext/#{connection['profile']}", input).headers('X-Workato-Connector': 'enforce')
+        post("http://localhost/ext/#{connection['profile']}/computeDigest", input).headers('X-Workato-Connector': 'enforce')
       }
     }
   }
