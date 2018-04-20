@@ -36,12 +36,12 @@ dependencies {
     compileOnly "com.fasterxml.jackson.core:jackson-databind:2.8.8"
     compileOnly "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.8.8"
 
-    compileOnly "javax.inject:javax.inject:1"
-    compileOnly "org.apache.commons:commons-lang3:3.5"
-    compileOnly "net.sf.jopt-simple:jopt-simple:5.0.3"
     compileOnly "commons-io:commons-io:2.5"
-    compileOnly "org.apache.commons:commons-collections4:4.1"
     compileOnly "commons-codec:commons-codec:1.9"
-
+    compileOnly "javax.inject:javax.inject:1"
+    compileOnly "net.sf.jopt-simple:jopt-simple:5.0.3"
+    compileOnly "org.apache.commons:commons-lang3:3.5"
+    compileOnly "org.apache.commons:commons-collections4:4.1"
+    compileOnly "org.apache.httpcomponents:httpclient:4.5.3"
 }
 
