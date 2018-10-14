@@ -93,7 +93,7 @@ Steps to build an extension:
 ## Using the extension in Recipe
 
 In order to use the extension in a recipe, we need a custom adapter in Workato. Sample adapter for the extension 
-can be found [here](https://github.com/workato/connector_sdk/blob/master/basic_auth/onprem_security.rb).
+can be found [here](https://github.com/workato/connector_sdk/blob/master/custom_connectors/basic_auth/onprem_security.rb).
 
 ```ruby
 {
