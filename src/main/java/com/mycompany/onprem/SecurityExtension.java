@@ -4,6 +4,7 @@
 
 package com.mycompany.onprem;
 
+import jakarta.inject.Inject;
 import org.apache.commons.codec.binary.Hex;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Controller;
@@ -12,7 +13,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.ResponseBody;
 
-import javax.inject.Inject;
 import java.nio.charset.Charset;
 import java.security.MessageDigest;
 import java.util.Collections;

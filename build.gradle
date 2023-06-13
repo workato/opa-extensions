@@ -4,11 +4,13 @@ plugins {
     id 'application'
 }
 
-sourceCompatibility = 1.8
-version = '0.1'
+sourceCompatibility = 17
+version = '0.2'
 
 project.ext {
-    springVersion = '4.3.12.RELEASE'
+    springVersion = '6.0.9'
+    slf4jVersion = '2.0.6'
+    jacksonVersion = '2.15.1'
 }
 
 repositories {
@@ -18,30 +20,30 @@ repositories {
 }
 
 dependencies {
-    compileOnly "org.slf4j:slf4j-api:1.7.25"
-    compileOnly "org.slf4j:jcl-over-slf4j:1.7.25"
-    compileOnly "org.slf4j:jul-to-slf4j:1.7.25"
-    compileOnly "org.slf4j:log4j-over-slf4j:1.7.25"
+    implementation "org.slf4j:slf4j-api:${slf4jVersion}"
+    implementation "org.slf4j:jcl-over-slf4j:${slf4jVersion}"
+    implementation "org.slf4j:jul-to-slf4j:${slf4jVersion}"
+    implementation "org.slf4j:log4j-over-slf4j:${slf4jVersion}"
 
-    compileOnly "javax.servlet:javax.servlet-api:3.1.0"
-    compileOnly "javax.websocket:javax.websocket-api:1.1"
-    compileOnly "javax.validation:validation-api:2.0.1.Final"
+    implementation "jakarta.servlet:jakarta.servlet-api:6.0.0"
+    implementation "jakarta.websocket:jakarta.websocket-api:2.1.0"
+    implementation "jakarta.validation:jakarta.validation-api:3.0.2"
+    implementation "jakarta.inject:jakarta.inject-api:2.0.1"
 
-    compileOnly "org.springframework:spring-context:${springVersion}"
-    compileOnly "org.springframework:spring-jdbc:${springVersion}"
-    compileOnly "org.springframework:spring-jms:${springVersion}"
-    compileOnly "org.springframework:spring-webmvc:${springVersion}"
+    implementation "org.springframework:spring-context:${springVersion}"
+    implementation "org.springframework:spring-jdbc:${springVersion}"
+    implementation "org.springframework:spring-jms:${springVersion}"
+    implementation "org.springframework:spring-webmvc:${springVersion}"
 
-    compileOnly "com.fasterxml.jackson.core:jackson-core:2.8.8"
-    compileOnly "com.fasterxml.jackson.core:jackson-databind:2.8.8"
-    compileOnly "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.8.8"
+    implementation "com.fasterxml.jackson.core:jackson-core:${jacksonVersion}"
+    implementation "com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}"
+    implementation "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:${jacksonVersion}"
 
-    compileOnly "commons-io:commons-io:2.5"
-    compileOnly "commons-codec:commons-codec:1.9"
-    compileOnly "javax.inject:javax.inject:1"
-    compileOnly "net.sf.jopt-simple:jopt-simple:5.0.3"
-    compileOnly "org.apache.commons:commons-lang3:3.5"
-    compileOnly "org.apache.commons:commons-collections4:4.1"
-    compileOnly "org.apache.httpcomponents:httpclient:4.5.3"
+    implementation "commons-io:commons-io:2.11.0"
+    implementation "commons-codec:commons-codec:1.15"
+    implementation "net.sf.jopt-simple:jopt-simple:5.0.3"
+    implementation "org.apache.commons:commons-lang3:3.12.0"
+    implementation "org.apache.commons:commons-collections4:4.4"
+    implementation "org.apache.httpcomponents:httpclient:4.5.14"
 }
 
