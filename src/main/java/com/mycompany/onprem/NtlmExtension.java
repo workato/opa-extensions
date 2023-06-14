@@ -1,8 +1,7 @@
 package com.mycompany.onprem;
 
-import javax.inject.Inject;
-import javax.servlet.http.HttpServletResponse;
-
+import jakarta.inject.Inject;
+import jakarta.servlet.http.HttpServletResponse;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpStatus;
 import org.apache.http.auth.AuthScope;
