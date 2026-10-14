@@ -4,7 +4,8 @@ plugins {
     id 'application'
 }
 
-sourceCompatibility = 17
+sourceCompatibility = 21
+targetCompatibility = 21
 version = '0.2'
 
 project.ext {
@@ -19,7 +20,74 @@ repositories {
     jcenter()
 }
 
+def extensionApiDir = file("$projectDir/extension-api")
+
+task validateExtensionJars {
+    description = 'Validates that extension-api and extension-test JARs are present and version-consistent.'
+    doFirst {
+        def copyHint = "\nPlease copy 'extension-api-<version>.jar' and 'extension-test-<version>.jar' " +
+                "from your agent distribution into '${extensionApiDir}'."
+
+        if (!extensionApiDir.isDirectory()) {
+            throw new GradleException("Extension JAR directory '${extensionApiDir}' is missing." + copyHint)
+        }
+
+        def apiJars = extensionApiDir.listFiles({ dir, name -> name ==~ /extension-api-.+\.jar/ } as FilenameFilter) ?: []
+        def testJars = extensionApiDir.listFiles({ dir, name -> name ==~ /extension-test-.+\.jar/ } as FilenameFilter) ?: []
+
+        def missing = []
+        if (apiJars.length == 0) missing << 'extension-api-<version>.jar'
+        if (testJars.length == 0) missing << 'extension-test-<version>.jar'
+        if (missing) {
+            throw new GradleException("Missing required JAR(s) in '${extensionApiDir}': ${missing.join(', ')}." + copyHint)
+        }
+
+        if (apiJars.length > 1) {
+            throw new GradleException(
+                    "Multiple versions of extension-api JAR found: ${apiJars*.name}." + copyHint)
+        }
+        if (testJars.length > 1) {
+            throw new GradleException(
+                    "Multiple versions of extension-test JAR found: ${testJars*.name}." + copyHint)
+        }
+
+        def apiVersion = (apiJars[0].name =~ /extension-api-(.+)\.jar/)[0][1]
+        def testVersion = (testJars[0].name =~ /extension-test-(.+)\.jar/)[0][1]
+        if (apiVersion != testVersion) {
+            throw new GradleException(
+                    "Mixed JAR versions detected: extension-api=${apiVersion}, extension-test=${testVersion}." + copyHint)
+        }
+    }
+}
+
+task extractExtensionReadmes {
+    description = 'Extracts README.md from each extension JAR into the extension-api directory.'
+    dependsOn validateExtensionJars
+    doLast {
+        [['extension-api', 'README-extension-api.md'],
+         ['extension-test', 'README-extension-test.md']].each { prefix, outName ->
+            def jar = extensionApiDir.listFiles({ dir, name -> name ==~ /${prefix}-.+\.jar/ } as FilenameFilter)[0]
+            def outFile = new File(extensionApiDir, outName)
+            new java.util.zip.ZipFile(jar).withCloseable { zf ->
+                def entry = zf.getEntry('README.md')
+                if (entry == null) {
+                    throw new GradleException("README.md not found in '${jar.name}'.")
+                }
+                zf.getInputStream(entry).withCloseable { input ->
+                    outFile.withOutputStream { out -> out << input }
+                }
+            }
+        }
+    }
+}
+
+tasks.withType(AbstractCompile).configureEach { it.dependsOn extractExtensionReadmes }
+processResources.dependsOn extractExtensionReadmes
+
 dependencies {
+    implementation fileTree(dir: extensionApiDir, include: 'extension-api-*.jar')
+    testImplementation fileTree(dir: extensionApiDir, include: 'extension-test-*.jar')
+
     implementation "org.slf4j:slf4j-api:${slf4jVersion}"
     implementation "org.slf4j:jcl-over-slf4j:${slf4jVersion}"
     implementation "org.slf4j:jul-to-slf4j:${slf4jVersion}"
@@ -45,5 +113,13 @@ dependencies {
     implementation "org.apache.commons:commons-lang3:3.12.0"
     implementation "org.apache.commons:commons-collections4:4.4"
     implementation "org.apache.httpcomponents:httpclient:4.5.14"
+
+    testImplementation "org.springframework:spring-test:${springVersion}"
+    testImplementation "org.junit.jupiter:junit-jupiter:5.10.0"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.10.0"
+}
+
+test {
+    useJUnitPlatform()
 }
 

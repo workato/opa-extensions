@@ -1,0 +1,4 @@
+extensions:
+  security:
+    controller: com.mycompany.onprem.SecurityExtension
+    secret: test-secret
