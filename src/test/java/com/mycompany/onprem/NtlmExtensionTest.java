@@ -4,6 +4,7 @@ import com.sun.net.httpserver.HttpServer;
 import com.workato.agent.extension.test.AgentExtensionHarness;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.test.web.servlet.MvcResult;
@@ -181,5 +182,74 @@ class NtlmExtensionTest {
 
     private String upstreamUrl(String path) {
         return "http://127.0.0.1:" + port + path;
+    }
+
+    @Nested
+    class WithAllowList {
+
+        @RegisterExtension
+        AgentExtensionHarness restrictedAgent = AgentExtensionHarness.extension("ntlm")
+                .controller(NtlmExtension.class)
+                .property("connect-timeout-ms", "1000")
+                .property("read-timeout-ms", "2000")
+                .property("ntlm.allowed-hosts", "127.0.0.1, *.corp.local");
+
+        @Test
+        void allowsExactHostInAllowList() throws Exception {
+            MvcResult result = restrictedAgent.mockMvc().perform(post(restrictedAgent.urlFor("/request"))
+                            .header("X-Workato-NTLM-auth", "user:pass@DOMAIN")
+                            .header("X-Workato-NTLM-url", upstreamUrl("/ok")))
+                    .andReturn();
+
+            assertEquals(200, result.getResponse().getStatus());
+            assertEquals("upstream-ok", result.getResponse().getContentAsString());
+            assertEquals(1, okHits.get(), "upstream must be contacted when host is allow-listed");
+        }
+
+        @Test
+        void rejectsHostNotInAllowList() throws Exception {
+            MvcResult result = restrictedAgent.mockMvc().perform(post(restrictedAgent.urlFor("/request"))
+                            .header("X-Workato-NTLM-auth", "user:pass@DOMAIN")
+                            .header("X-Workato-NTLM-url", "http://localhost:" + port + "/ok"))
+                    .andReturn();
+
+            assertEquals(403, result.getResponse().getStatus());
+            assertEquals(0, okHits.get(), "upstream must not be contacted when host is not allow-listed");
+        }
+    }
+
+    @Nested
+    class WithWildcardAllowList {
+
+        @RegisterExtension
+        AgentExtensionHarness wildcardAgent = AgentExtensionHarness.extension("ntlm")
+                .controller(NtlmExtension.class)
+                .property("connect-timeout-ms", "1000")
+                .property("read-timeout-ms", "2000")
+                .property("ntlm.allowed-hosts", "*.0.0.1");
+
+        @Test
+        void wildcardMatchesSubdomain() throws Exception {
+            // "*.0.0.1" matches "127.0.0.1" because the host ends with ".0.0.1" and has a longer prefix.
+            MvcResult result = wildcardAgent.mockMvc().perform(post(wildcardAgent.urlFor("/request"))
+                            .header("X-Workato-NTLM-auth", "user:pass@DOMAIN")
+                            .header("X-Workato-NTLM-url", upstreamUrl("/ok")))
+                    .andReturn();
+
+            assertEquals(200, result.getResponse().getStatus());
+            assertEquals("upstream-ok", result.getResponse().getContentAsString());
+            assertEquals(1, okHits.get());
+        }
+
+        @Test
+        void wildcardDoesNotMatchUnrelatedHost() throws Exception {
+            MvcResult result = wildcardAgent.mockMvc().perform(post(wildcardAgent.urlFor("/request"))
+                            .header("X-Workato-NTLM-auth", "user:pass@DOMAIN")
+                            .header("X-Workato-NTLM-url", "http://localhost:" + port + "/ok"))
+                    .andReturn();
+
+            assertEquals(403, result.getResponse().getStatus());
+            assertEquals(0, okHits.get());
+        }
     }
 }

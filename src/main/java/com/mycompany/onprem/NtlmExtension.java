@@ -25,6 +25,10 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Locale;
 
 @RestController
 public class NtlmExtension {
@@ -45,6 +49,14 @@ public class NtlmExtension {
     @Value("${read-timeout-ms:30000}")
     private int readTimeoutMs;
 
+    // Comma-separated allow-list of target hosts. Entries are matched case-insensitively.
+    // Supported forms: exact host ("corp.local") and wildcard subdomain ("*.corp.local").
+    // Empty value → no host check is performed (back-compat; recommended to configure explicitly).
+    @Value("${ntlm.allowed-hosts:}")
+    private String allowedHostsRaw;
+
+    private volatile List<String> allowedHostsCache;
+
     private volatile CloseableHttpClient httpClient;
 
     private static URI parseHttpUri(String raw) {
@@ -61,7 +73,7 @@ public class NtlmExtension {
         if (scheme == null) {
             return null;
         }
-        scheme = scheme.toLowerCase(java.util.Locale.ROOT);
+        scheme = scheme.toLowerCase(Locale.ROOT);
         if (!"http".equals(scheme) && !"https".equals(scheme)) {
             return null;
         }
@@ -69,6 +81,48 @@ public class NtlmExtension {
             return null;
         }
         return uri;
+    }
+
+    private boolean hostAllowed(String host) {
+        List<String> patterns = allowedHostPatterns();
+        if (patterns.isEmpty()) {
+            return true;
+        }
+        String h = host.toLowerCase(Locale.ROOT);
+        for (String p : patterns) {
+            if (p.startsWith("*.")) {
+                String suffix = p.substring(1);
+                if (h.length() > suffix.length() && h.endsWith(suffix)) {
+                    return true;
+                }
+            }
+            else if (p.equals(h)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private List<String> allowedHostPatterns() {
+        List<String> cached = allowedHostsCache;
+        if (cached != null) {
+            return cached;
+        }
+        if (allowedHostsRaw == null || allowedHostsRaw.isBlank()) {
+            cached = Collections.emptyList();
+        }
+        else {
+            List<String> parsed = new ArrayList<>();
+            for (String token : allowedHostsRaw.split(",")) {
+                String trimmed = token.trim().toLowerCase(Locale.ROOT);
+                if (!trimmed.isEmpty()) {
+                    parsed.add(trimmed);
+                }
+            }
+            cached = Collections.unmodifiableList(parsed);
+        }
+        allowedHostsCache = cached;
+        return cached;
     }
 
     @PostMapping("/request")
@@ -88,6 +142,13 @@ public class NtlmExtension {
         if (target == null) {
             log.warn("[{}] NTLM target URL rejected: {}", profile, urlHeader);
             httpServletResponse.setStatus(HttpStatus.SC_BAD_REQUEST);
+            return null;
+        }
+
+        if (!hostAllowed(target.getHost())) {
+            log.warn("[{}] NTLM target host '{}' not in allow-list (ntlm.allowed-hosts)",
+                    profile, target.getHost());
+            httpServletResponse.setStatus(HttpStatus.SC_FORBIDDEN);
             return null;
         }
 
