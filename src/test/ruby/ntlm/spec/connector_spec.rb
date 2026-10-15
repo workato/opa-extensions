@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
+CONNECTOR_PATH = File.expand_path('../../../../main/ruby/ntlm/connector.rb', __dir__).freeze
+
 RSpec.describe 'onprem ntlm connector' do
   let(:settings) { Workato::Connector::Sdk::Settings.from_default_file }
-  let(:connector) { Workato::Connector::Sdk::Connector.from_file('connector.rb', settings) }
+  let(:connector) { Workato::Connector::Sdk::Connector.from_file(CONNECTOR_PATH, settings) }
 
   describe 'methods.ntlm_auth_header' do
     it 'builds user:pass@domain/workstation when all fields are set' do

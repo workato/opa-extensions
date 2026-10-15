@@ -2,7 +2,7 @@
  * Copyright (c) 2018 MyCompany, Inc. All rights reserved.
  */
 
-package com.mycompany.onprem;
+package com.mycompany.onprem.security;
 
 import com.workato.agent.extension.api.AgentConfigurationV1;
 import com.workato.agent.extension.api.AgentExtensionApiV1;
@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Collections;
 import java.util.Map;
 
@@ -28,21 +29,33 @@ public class SecurityExtension {
     private AgentExtensionApiV1 agent;
 
     @PostMapping("/computeDigest")
-    public Map<String, Object> computeDigest(@RequestBody Map<String, Object> body) throws Exception {
+    public Map<String, Object> computeDigest(@RequestBody Map<String, Object> body) {
         String profile = agent.getContext().getProfileName();
         AgentConfigurationV1 cfg = agent.getContext().getProfileConfiguration();
 
-        Object secret = cfg.get("secret");
+        // Avoid the config key name `secret` — the agent's SecretsPreprocessor
+        // treats any map containing `secret:` as a secret-provider spec and tries
+        // to resolve the value through SecretsProviderHolder at config-load time,
+        // which fails with "SecretsProvider is not supported" in local-HTTP mode.
+        Object secret = cfg.get("signing-secret");
         if (secret == null) {
-            log.error("[{}] 'secret' is not configured in extension profile", profile);
-            throw new IllegalStateException("'secret' is not configured for profile " + profile);
+            log.error("[{}] 'signing-secret' is not configured in extension profile", profile);
+            throw new IllegalStateException("'signing-secret' is not configured for profile " + profile);
         }
 
         String payload = (String) body.get("payload");
         log.debug("[{}] computing digest for payload of {} chars",
                 profile, payload == null ? 0 : payload.length());
 
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            // SHA-256 is a standard algorithm guaranteed by the JRE spec; keep
+            // the signature checked-exception-free so controller method refs
+            // can be used with the DeployedAgentLauncher's typed httpPost.
+            throw new IllegalStateException("SHA-256 is not available in this JVM", e);
+        }
         digest.update(secret.toString().getBytes(StandardCharsets.UTF_8));
         byte[] result = digest.digest(payload.getBytes(StandardCharsets.UTF_8));
         return Collections.singletonMap("signature", Hex.encodeHexString(result));

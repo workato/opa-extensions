@@ -62,27 +62,35 @@ distribution yet. Ask the user to copy them rather than guessing at the API.
 ## Workato custom connectors (Ruby)
 
 Each on-prem extension has a companion Workato custom connector (a Ruby
-`connector.rb` file) under `src/main/ruby/<name>/`. Each directory is a
-**self-contained Workato SDK project** (connector + Gemfile + settings.yaml +
-specs + VCR cassettes). The connectors are what Workato recipes talk to; the
-agent extensions are what the connectors talk to.
+`connector.rb` file) under `src/main/ruby/<name>/`. The test harness that
+exercises each connector lives under `src/test/ruby/<name>/` as a
+**self-contained Workato SDK project** (Gemfile + settings.yaml + specs + VCR
+cassettes). The connectors are what Workato recipes talk to; the agent
+extensions are what the connectors talk to.
 
-Current connectors:
+Current connectors (deliverable → test project):
 
-- `src/main/ruby/security/` → calls `SecurityExtension`
-- `src/main/ruby/ntlm/` → calls `NtlmExtension`
+- `src/main/ruby/security/connector.rb` → `src/test/ruby/security/` → calls `SecurityExtension`
+- `src/main/ruby/ntlm/connector.rb`     → `src/test/ruby/ntlm/`     → calls `NtlmExtension`
 
 ### When adding or editing a connector
 
-- Keep each connector in its own subdirectory under `src/main/ruby/`.
+- Keep each connector in its own subdirectory under `src/main/ruby/<name>/`.
   The file **must be named `connector.rb`** — the Workato SDK does not accept
   any other name.
-- `settings.yaml` holds the connection fields the tests need.
-- Specs go in `spec/connector_spec.rb`. Any HTTP the connector performs must be
-  stubbed via VCR cassettes under `tape_library/`. Tests must not touch the
-  network — the harness is configured with `record: :none`.
+- The matching `src/test/ruby/<name>/` directory holds `settings.yaml` (connection
+  fields the tests load), `spec/connector_spec.rb`, `tape_library/` (VCR
+  cassettes), and the `Gemfile` that pulls in `workato-connector-sdk`.
+- Specs reference the connector via an absolute path pinned at the top of
+  `connector_spec.rb` as
+  `CONNECTOR_PATH = File.expand_path('../../../../main/ruby/<name>/connector.rb', __dir__).freeze`
+  — the relative hop crosses `test → main`, so adjust it carefully if you
+  nest spec files deeper.
+- Any HTTP the connector performs must be stubbed via VCR cassettes under
+  `src/test/ruby/<name>/tape_library/`. Tests must not touch the network —
+  the harness is configured with `record: :none`.
 - When you add an action that calls a new URL, add a new cassette YAML under
-  `tape_library/` (minimal format: see the existing files).
+  `src/test/ruby/<name>/tape_library/` (minimal format: see the existing files).
 
 ## Running tests
 
@@ -106,11 +114,13 @@ Current connectors:
 ### Writing Ruby tests
 
 - Test framework: RSpec + VCR + WebMock (all declared in each
-  `src/main/ruby/<name>/Gemfile`).
+  `src/test/ruby/<name>/Gemfile`).
 - Pattern per spec:
   ```ruby
+  CONNECTOR_PATH = File.expand_path('../../../../main/ruby/<name>/connector.rb', __dir__).freeze
+
   let(:settings)  { Workato::Connector::Sdk::Settings.from_default_file }
-  let(:connector) { Workato::Connector::Sdk::Connector.from_file('connector.rb', settings) }
+  let(:connector) { Workato::Connector::Sdk::Connector.from_file(CONNECTOR_PATH, settings) }
   ```
   Then invoke:
     - `connector.actions.<name>.execute(settings, input_hash)`
@@ -120,7 +130,7 @@ Current connectors:
   cassette file is `tape_library/<name>.yml`.
 - No real network: `spec_helper.rb` sets `record: :none`, so an unmocked
   request fails loudly.
-- To iterate locally without going through Gradle: `cd src/main/ruby/<name>
+- To iterate locally without going through Gradle: `cd src/test/ruby/<name>
   && bundle install && bundle exec rspec`.
 
 ## Toolchain

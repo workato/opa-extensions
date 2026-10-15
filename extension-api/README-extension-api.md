@@ -82,29 +82,17 @@ extensions:
 Build your JAR, copy it into `WORKATO_AGENT_HOME/lib_ext/`, restart the agent.
 Requests from Workato arrive at `POST /ext/my-extension/my-operation`.
 
-> **Classloader is fixed for the agent process lifetime.** Dropping a new JAR
-> into `lib_ext/` does *not* reload — the agent must be restarted. YAML entries
-> under `extensions:` *can* be reparsed on config reload, but no new classes
-> are loaded without a restart.
+> **Restart required to add, remove, or load code for extensions.** Dropping a
+> new JAR into `lib_ext/` or adding a new entry under `extensions:` does not
+> take effect until the agent is restarted; routes and classloaders are fixed
+> for the process lifetime.
 >
-> **Routes are mounted once at agent startup.** Dispatcher servlets for each
-> `/ext/{name}/*` are installed on the first boot. A reload of `config.yml`
-> reparses the `extensions:` section and updates the data visible via
-> `AgentExtensionContextV1`, but **does not add new routes or tear down removed
-> ones**. Concretely:
->
-> - Adding a brand-new entry under `extensions:` and reloading → `/ext/{new}/*`
-    > returns `404` until the agent is restarted.
-> - Removing an existing entry and reloading → the route stays mounted; the
-    > controller receives requests but `@Value("${...}")` lookups log a WARN
-    > `"Endpoint ... not found, possibly removed"` and resolve to `null`.
-> - Editing values under an existing entry → `@Value("${...}")` lookups pick
-    > up the new values on the next request (via `EndpointPropertySource`),
-    > but `getProfileConfiguration()` returns the snapshot captured at
-    > startup and does *not* change. Prefer `@Value` for keys that may be
-    > edited at runtime.
->
-> If you need the full set of endpoints to change at runtime, restart the agent.
+> **Reloading `config.yml` updates values only.** For an already-registered
+> extension, edits to its YAML values are picked up on the next request via
+> `@Value("${...}")`. The map returned by
+> `AgentExtensionContextV1.getProfileConfiguration()` is a snapshot captured at
+> startup and does **not** change — prefer `@Value` for keys that may be edited
+> at runtime.
 
 ## API Reference
 
@@ -132,26 +120,15 @@ public interface AgentExtensionContextV1 {
 }
 ```
 
-| Method                      | What you get                                                                                                                                                   |
-|-----------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `getProfileName()`          | The YAML key your extension is declared under (`my-extension` in the example above). Stable for the lifetime of the agent.                                     |
-| `getProfileConfiguration()` | Your extension's YAML section as a map, including the `controller` key alongside your custom properties. Snapshot — does not change across agent YAML reloads. |
+| Method                      | What you get                                                                                                                                                                       |
+|-----------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `getProfileName()`          | The YAML key your extension is declared under (`my-extension` in the example above). Stable for the lifetime of the agent.                                                         |
+| `getProfileConfiguration()` | Your extension's YAML section as a map, including the `controller` / `controllerClass` key alongside your custom properties. Snapshot — does not change across agent YAML reloads. |
 
-> **No cross-extension visibility by design.** An earlier draft exposed a
-> `getAllConfigurations()` method returning every loaded extension's YAML
-> section. It was removed before release: in a multi-tenant deployment where
-> extensions come from different third parties, a compromised extension could
-> have used it to exfiltrate every other extension's YAML — including secrets
-> stored in those sections. Each extension now sees only its own profile.
->
-> This narrows one attack vector but is **not full isolation** on its own.
-> An extension JAR's Spring context has the agent's main `ApplicationContext` as its
-> parent, which means the controller can still autowire any agent bean (e.g.,
-> `ServerConfig`) and reach other extensions' configuration that way. True
-> cross-extension isolation requires restricting the extension context's bean
-> visibility to the API surface only — tracked separately; not shipped in this
-> version. If you build a multi-tenant agent deployment with untrusted extension
-> code, assume extensions can observe each other until that work lands.
+> **Each extension sees only its own profile.** There is no API for discovering
+> other extensions' configuration. (Note that this does not provide full
+> isolation on its own: an extension controller still shares a Spring parent
+> context with agent internals and can reach other beans by autowiring.)
 
 ### `AgentConfigurationV1` — map view of a YAML section
 
@@ -228,13 +205,12 @@ identical. Typed accessors from the legacy `Configuration` (e.g., coerce to
 `int`/`boolean`) are not currently on `AgentConfigurationV1` — do the coercion
 yourself, or inject the leaf with `@Value`.
 
-### `ExtensionEndpoint` interface — never actually worked
+### `ExtensionEndpoint` interface — not supported
 
-The deprecated `com.workato.agent.config.ExtensionEndpoint` interface was
-documented historically, but **no bean of that type is ever registered** —
-`@Autowired ExtensionEndpoint` fails at startup with
-`NoSuchBeanDefinitionException`. If some tutorial told you to use it, that
-tutorial was wrong. Replace with `@Autowired AgentExtensionApiV1` as above.
+The deprecated `com.workato.agent.config.ExtensionEndpoint` interface has no
+bean registered against it — `@Autowired ExtensionEndpoint` fails at startup
+with `NoSuchBeanDefinitionException`. Use `@Autowired AgentExtensionApiV1`
+instead.
 
 ### `@Value` continues to work
 
@@ -257,7 +233,19 @@ before the legacy types are removed.
 ## Versioning
 
 The API is named `AgentExtensionApiV1` / `AgentExtensionContextV1` / `AgentConfigurationV1`.
-Additive changes (new methods on these interfaces) will be done in-place and
-are source- and binary-compatible when consumed via standard reflection and
-Spring injection. Incompatible changes will introduce a parallel `V2` family
-and keep `V1` running until a documented removal window.
+
+- `AgentExtensionApiV1` and `AgentExtensionContextV1` are **consumer-only** —
+  customer code calls their methods but does not implement them (the
+  implementation is supplied by the agent). Methods may be added to these
+  interfaces without breaking customer compile or runtime, as long as the
+  customer does not provide their own implementation.
+- `AgentConfigurationV1` extends `Map<String, Object>`; additional typed
+  accessors may be added here in future iterations, source- and binary-compatible
+  with existing calls.
+- Incompatible changes will introduce a parallel `V2` family and keep `V1`
+  running until a documented removal window.
+
+If you write a hand-rolled implementation of `AgentExtensionApiV1` or
+`AgentExtensionContextV1` for testing, prefer the harness in `extension-test`
+over implementing the interfaces directly — the harness is kept in sync as
+the interfaces evolve.

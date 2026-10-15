@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
+CONNECTOR_PATH = File.expand_path('../../../../main/ruby/security/connector.rb', __dir__).freeze
+
 RSpec.describe 'onprem security connector' do
   let(:settings) { Workato::Connector::Sdk::Settings.from_default_file }
-  let(:connector) { Workato::Connector::Sdk::Connector.from_file('connector.rb', settings) }
+  let(:connector) { Workato::Connector::Sdk::Connector.from_file(CONNECTOR_PATH, settings) }
 
   describe 'actions.sha256_digest' do
     it 'posts the payload to the agent and returns the signature it computed' do

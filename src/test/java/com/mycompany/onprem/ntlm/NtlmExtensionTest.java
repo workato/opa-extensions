@@ -1,6 +1,5 @@
-package com.mycompany.onprem;
+package com.mycompany.onprem.ntlm;
 
-import com.sun.net.httpserver.HttpServer;
 import com.workato.agent.extension.test.AgentExtensionHarness;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -10,10 +9,6 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.io.IOException;
-import java.io.OutputStream;
-import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -25,38 +20,18 @@ class NtlmExtensionTest {
             .controller(NtlmExtension.class)
             .property("connect-timeout-ms", "1000")
             .property("read-timeout-ms", "2000");
-    private final AtomicInteger okHits = new AtomicInteger();
-    private final AtomicInteger forbiddenHits = new AtomicInteger();
-    private HttpServer upstream;
-    private int port;
+
+    private LocalUpstreamServer upstream;
 
     @BeforeEach
     void startUpstream() throws IOException {
-        upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        upstream.createContext("/ok", exchange -> {
-            okHits.incrementAndGet();
-            byte[] body = "upstream-ok".getBytes(StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(200, body.length);
-            try (OutputStream os = exchange.getResponseBody()) {
-                os.write(body);
-            }
-        });
-        upstream.createContext("/forbidden", exchange -> {
-            forbiddenHits.incrementAndGet();
-            exchange.sendResponseHeaders(403, -1);
-            exchange.close();
-        });
-        upstream.start();
-        port = upstream.getAddress().getPort();
+        upstream = LocalUpstreamServer.start();
     }
 
     @AfterEach
     void stopUpstream() {
         if (upstream != null) {
-            try {
-                upstream.stop(0);
-            } catch (Exception ignored) {
-            }
+            upstream.stop();
         }
     }
 
@@ -64,58 +39,58 @@ class NtlmExtensionTest {
     void forwardsUpstreamBodyOnHttp200() throws Exception {
         MvcResult result = agent.mockMvc().perform(post(agent.urlFor("/request"))
                         .header("X-Workato-NTLM-auth", "user:pass@WORKGROUP/WS01")
-                        .header("X-Workato-NTLM-url", upstreamUrl("/ok")))
+                        .header("X-Workato-NTLM-url", upstream.urlFor("/ok")))
                 .andReturn();
 
         assertEquals(200, result.getResponse().getStatus());
-        assertEquals("upstream-ok", result.getResponse().getContentAsString());
-        assertEquals(1, okHits.get(), "upstream must be contacted exactly once");
+        assertEquals(LocalUpstreamServer.OK_BODY, result.getResponse().getContentAsString());
+        assertEquals(1, upstream.okHits.get(), "upstream must be contacted exactly once");
     }
 
     @Test
     void forwardsUpstreamStatusOnNon200() throws Exception {
         MvcResult result = agent.mockMvc().perform(post(agent.urlFor("/request"))
                         .header("X-Workato-NTLM-auth", "user:pass@DOMAIN")
-                        .header("X-Workato-NTLM-url", upstreamUrl("/forbidden")))
+                        .header("X-Workato-NTLM-url", upstream.urlFor("/forbidden")))
                 .andReturn();
 
         assertEquals(403, result.getResponse().getStatus());
         assertEquals("", result.getResponse().getContentAsString());
-        assertEquals(1, forbiddenHits.get());
+        assertEquals(1, upstream.forbiddenHits.get());
     }
 
     @Test
     void malformedCredentialsSkipHttpCallEntirely() throws Exception {
         MvcResult result = agent.mockMvc().perform(post(agent.urlFor("/request"))
                         .header("X-Workato-NTLM-auth", "no-colon-no-at")
-                        .header("X-Workato-NTLM-url", upstreamUrl("/ok")))
+                        .header("X-Workato-NTLM-url", upstream.urlFor("/ok")))
                 .andReturn();
 
         assertEquals(200, result.getResponse().getStatus());
         assertEquals("", result.getResponse().getContentAsString());
-        assertEquals(0, okHits.get(), "upstream must not be contacted when credentials are malformed");
+        assertEquals(0, upstream.okHits.get(), "upstream must not be contacted when credentials are malformed");
     }
 
     @Test
     void emptyCredentialSplitSkipsHttpCall() throws Exception {
         MvcResult result = agent.mockMvc().perform(post(agent.urlFor("/request"))
                         .header("X-Workato-NTLM-auth", "user-only-no-colon@DOMAIN")
-                        .header("X-Workato-NTLM-url", upstreamUrl("/ok")))
+                        .header("X-Workato-NTLM-url", upstream.urlFor("/ok")))
                 .andReturn();
 
         assertEquals(200, result.getResponse().getStatus());
         assertEquals("", result.getResponse().getContentAsString());
-        assertEquals(0, okHits.get(), "upstream must not be contacted when password is missing");
+        assertEquals(0, upstream.okHits.get(), "upstream must not be contacted when password is missing");
     }
 
     @Test
     void upstreamFailureSwallowsExceptionAndReturnsEmptyBody() throws Exception {
-        upstream.stop(0);  // free the port — next connect yields ECONNREFUSED
-        upstream = null;
+        int formerPort = upstream.port();
+        upstream.stop();  // free the port — next connect yields ECONNREFUSED
 
         MvcResult result = agent.mockMvc().perform(post(agent.urlFor("/request"))
                         .header("X-Workato-NTLM-auth", "user:pass")
-                        .header("X-Workato-NTLM-url", "http://127.0.0.1:" + port + "/ok"))
+                        .header("X-Workato-NTLM-url", "http://127.0.0.1:" + formerPort + "/ok"))
                 .andReturn();
 
         assertEquals(200, result.getResponse().getStatus());
@@ -145,7 +120,7 @@ class NtlmExtensionTest {
                 .andReturn();
 
         assertEquals(400, result.getResponse().getStatus());
-        assertEquals(0, okHits.get(), "upstream must not be contacted for non-http schemes");
+        assertEquals(0, upstream.okHits.get(), "upstream must not be contacted for non-http schemes");
     }
 
     @Test
@@ -156,7 +131,7 @@ class NtlmExtensionTest {
                 .andReturn();
 
         assertEquals(400, result.getResponse().getStatus());
-        assertEquals(0, okHits.get(), "upstream must not be contacted for malformed URLs");
+        assertEquals(0, upstream.okHits.get(), "upstream must not be contacted for malformed URLs");
     }
 
     @Test
@@ -167,21 +142,17 @@ class NtlmExtensionTest {
                 .andReturn();
 
         assertEquals(400, result.getResponse().getStatus());
-        assertEquals(0, okHits.get(), "upstream must not be contacted when host is missing");
+        assertEquals(0, upstream.okHits.get(), "upstream must not be contacted when host is missing");
     }
 
     private void callOkWithAuth(String auth) throws Exception {
         MvcResult result = agent.mockMvc().perform(post(agent.urlFor("/request"))
                         .header("X-Workato-NTLM-auth", auth)
-                        .header("X-Workato-NTLM-url", upstreamUrl("/ok")))
+                        .header("X-Workato-NTLM-url", upstream.urlFor("/ok")))
                 .andReturn();
         assertEquals(200, result.getResponse().getStatus(), "auth=" + auth);
-        assertEquals("upstream-ok", result.getResponse().getContentAsString(), "auth=" + auth);
-        assertEquals(1, okHits.get(), "auth=" + auth);
-    }
-
-    private String upstreamUrl(String path) {
-        return "http://127.0.0.1:" + port + path;
+        assertEquals(LocalUpstreamServer.OK_BODY, result.getResponse().getContentAsString(), "auth=" + auth);
+        assertEquals(1, upstream.okHits.get(), "auth=" + auth);
     }
 
     @Nested
@@ -198,23 +169,23 @@ class NtlmExtensionTest {
         void allowsExactHostInAllowList() throws Exception {
             MvcResult result = restrictedAgent.mockMvc().perform(post(restrictedAgent.urlFor("/request"))
                             .header("X-Workato-NTLM-auth", "user:pass@DOMAIN")
-                            .header("X-Workato-NTLM-url", upstreamUrl("/ok")))
+                            .header("X-Workato-NTLM-url", upstream.urlFor("/ok")))
                     .andReturn();
 
             assertEquals(200, result.getResponse().getStatus());
-            assertEquals("upstream-ok", result.getResponse().getContentAsString());
-            assertEquals(1, okHits.get(), "upstream must be contacted when host is allow-listed");
+            assertEquals(LocalUpstreamServer.OK_BODY, result.getResponse().getContentAsString());
+            assertEquals(1, upstream.okHits.get(), "upstream must be contacted when host is allow-listed");
         }
 
         @Test
         void rejectsHostNotInAllowList() throws Exception {
             MvcResult result = restrictedAgent.mockMvc().perform(post(restrictedAgent.urlFor("/request"))
                             .header("X-Workato-NTLM-auth", "user:pass@DOMAIN")
-                            .header("X-Workato-NTLM-url", "http://localhost:" + port + "/ok"))
+                            .header("X-Workato-NTLM-url", "http://localhost:" + upstream.port() + "/ok"))
                     .andReturn();
 
             assertEquals(403, result.getResponse().getStatus());
-            assertEquals(0, okHits.get(), "upstream must not be contacted when host is not allow-listed");
+            assertEquals(0, upstream.okHits.get(), "upstream must not be contacted when host is not allow-listed");
         }
     }
 
@@ -233,23 +204,23 @@ class NtlmExtensionTest {
             // "*.0.0.1" matches "127.0.0.1" because the host ends with ".0.0.1" and has a longer prefix.
             MvcResult result = wildcardAgent.mockMvc().perform(post(wildcardAgent.urlFor("/request"))
                             .header("X-Workato-NTLM-auth", "user:pass@DOMAIN")
-                            .header("X-Workato-NTLM-url", upstreamUrl("/ok")))
+                            .header("X-Workato-NTLM-url", upstream.urlFor("/ok")))
                     .andReturn();
 
             assertEquals(200, result.getResponse().getStatus());
-            assertEquals("upstream-ok", result.getResponse().getContentAsString());
-            assertEquals(1, okHits.get());
+            assertEquals(LocalUpstreamServer.OK_BODY, result.getResponse().getContentAsString());
+            assertEquals(1, upstream.okHits.get());
         }
 
         @Test
         void wildcardDoesNotMatchUnrelatedHost() throws Exception {
             MvcResult result = wildcardAgent.mockMvc().perform(post(wildcardAgent.urlFor("/request"))
                             .header("X-Workato-NTLM-auth", "user:pass@DOMAIN")
-                            .header("X-Workato-NTLM-url", "http://localhost:" + port + "/ok"))
+                            .header("X-Workato-NTLM-url", "http://localhost:" + upstream.port() + "/ok"))
                     .andReturn();
 
             assertEquals(403, result.getResponse().getStatus());
-            assertEquals(0, okHits.get());
+            assertEquals(0, upstream.okHits.get());
         }
     }
 }

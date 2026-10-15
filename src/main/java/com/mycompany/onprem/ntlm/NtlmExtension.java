@@ -1,4 +1,4 @@
-package com.mycompany.onprem;
+package com.mycompany.onprem.ntlm;
 
 import com.workato.agent.extension.api.AgentExtensionApiV1;
 import jakarta.servlet.http.HttpServletResponse;

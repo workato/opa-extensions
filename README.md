@@ -10,7 +10,7 @@ Extension mechanism is enabled by adding the `extensions` section to the config 
       classpath: C:\\Program Files\\Workato Agent\\ext
     extensions:
       security:
-        controllerClass: com.mycompany.onprem.SecurityExtension
+        controllerClass: com.mycompany.onprem.security.SecurityExtension
         secret: HA63A3043AMMMM
 ```
 
@@ -60,7 +60,7 @@ Given the configuration:
 ```yml
     extensions:
       security:
-        controllerClass: com.mycompany.onprem.SecurityExtension
+        controllerClass: com.mycompany.onprem.security.SecurityExtension
         secret: HA63A3043AMMMM 
 ```
 
@@ -193,7 +193,7 @@ Useful standalone Gradle tasks:
 ```yml
     extensions:
       security:
-        controllerClass: com.mycompany.onprem.SecurityExtension
+        controllerClass: com.mycompany.onprem.security.SecurityExtension
         secret: HA63A3043AMMMM
 ```
 
@@ -210,13 +210,13 @@ anything that contradicts the generated reference, trust the reference.
 
 ### Running
 
-| Command                                                                                                          | What runs                                                           |
-|------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `./gradlew test`                                                                                                 | Java JUnit **and** Ruby RSpec suites (per-test output for both).    |
-| `./gradlew :test`                                                                                                | Java only.                                                          |
-| `./gradlew :test --tests '*Ntlm*'`                                                                               | Only tests whose fully-qualified name matches the pattern.          |
-| `./gradlew :test --tests 'com.mycompany.onprem.SecurityExtensionTest.computesExpectedSha256OfSecretThenPayload'` | One specific test method.                                           |
-| `./gradlew :test --rerun-tasks`                                                                                  | Force re-run even if nothing changed (useful when a test is flaky). |
+| Command                                                                                                                   | What runs                                                           |
+|---------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `./gradlew test`                                                                                                          | Java JUnit **and** Ruby RSpec suites (per-test output for both).    |
+| `./gradlew :test`                                                                                                         | Java only.                                                          |
+| `./gradlew :test --tests '*Ntlm*'`                                                                                        | Only tests whose fully-qualified name matches the pattern.          |
+| `./gradlew :test --tests 'com.mycompany.onprem.security.SecurityExtensionTest.computesExpectedSha256OfSecretThenPayload'` | One specific test method.                                           |
+| `./gradlew :test --rerun-tasks`                                                                                           | Force re-run even if nothing changed (useful when a test is flaky). |
 
 Per-test output (`PASSED`/`FAILED`/`SKIPPED`) is enabled via `testLogging` in
 `build.gradle`.
@@ -296,21 +296,26 @@ troubleshooting table.
 ## Ruby custom-connector tests
 
 Each on-prem extension has a companion Workato custom connector (Ruby) under
-`src/main/ruby/<name>/`. Each directory is a **self-contained Workato SDK
-project** so it can be exercised without a running agent and without a Workato
+`src/main/ruby/<name>/connector.rb` — the deliverable that gets published to
+Workato. The test harness around each connector lives under
+`src/test/ruby/<name>/` as a **self-contained Workato SDK project**, so each
+connector can be exercised without a running agent and without a Workato
 cloud account.
 
 ```
 src/main/ruby/
-├── security/              ← connector for SecurityExtension
-│   ├── connector.rb       ← fixed filename; the Workato SDK requires it
-│   ├── Gemfile
+├── security/connector.rb  ← connector for SecurityExtension (fixed filename)
+└── ntlm/connector.rb      ← connector for NtlmExtension
+
+src/test/ruby/
+├── security/              ← test harness for the security connector
+│   ├── Gemfile            ← pulls in workato-connector-sdk + rspec + vcr + webmock
 │   ├── settings.yaml      ← connection fields the specs load as settings
 │   ├── spec/
 │   │   ├── spec_helper.rb
-│   │   └── connector_spec.rb
+│   │   └── connector_spec.rb  ← CONNECTOR_PATH points at ../../../../main/ruby/security/connector.rb
 │   └── tape_library/      ← VCR cassettes (one YAML per HTTP interaction set)
-└── ntlm/                  ← same layout, calls NtlmExtension
+└── ntlm/                  ← same layout, points at ../../../../main/ruby/ntlm/connector.rb
 ```
 
 ### Running
@@ -321,7 +326,7 @@ src/main/ruby/
 | `./gradlew testRubyConnectors`                 | Both Ruby suites (no Java).                      |
 | `./gradlew :securityRspec`                     | One Ruby suite.                                  |
 | `./gradlew :ntlmRspec`                         | One Ruby suite.                                  |
-| `cd src/main/ruby/<name> && bundle exec rspec` | Fastest local iteration — skips Gradle entirely. |
+| `cd src/test/ruby/<name> && bundle exec rspec` | Fastest local iteration — skips Gradle entirely. |
 
 Prerequisites: Ruby 3.2.x (pinned in `.tool-versions` for asdf; works with any
 version manager or system Ruby that satisfies it) and `bundler`. The Gradle
@@ -333,9 +338,11 @@ wrong interpreter.
 ### Writing a new spec
 
 ```ruby
+CONNECTOR_PATH = File.expand_path('../../../../main/ruby/<name>/connector.rb', __dir__).freeze
+
 RSpec.describe 'onprem <name> connector' do
   let(:settings)  { Workato::Connector::Sdk::Settings.from_default_file }
-  let(:connector) { Workato::Connector::Sdk::Connector.from_file('connector.rb', settings) }
+  let(:connector) { Workato::Connector::Sdk::Connector.from_file(CONNECTOR_PATH, settings) }
 
   describe 'actions.<action_name>' do
     it 'does the thing' do
@@ -366,7 +373,7 @@ Rules of thumb:
 
 ### Working with VCR cassettes
 
-Cassettes live in `src/main/ruby/<name>/tape_library/`. Each file is a plain
+Cassettes live in `src/test/ruby/<name>/tape_library/`. Each file is a plain
 YAML dump of one or more HTTP interactions. The default VCR matcher is
 `[:method, :uri]` — request body and headers are **not** compared, so you can
 change what the connector sends without invalidating a cassette, as long as
@@ -444,10 +451,10 @@ server:
   classpath: <AGENT_HOME>/ext
 extensions:
   security:
-    controllerClass: com.mycompany.onprem.SecurityExtension
+    controllerClass: com.mycompany.onprem.security.SecurityExtension
     secret: a-local-test-secret
   ntlm:
-    controllerClass: com.mycompany.onprem.NtlmExtension
+    controllerClass: com.mycompany.onprem.ntlm.NtlmExtension
     # connect-timeout-ms / read-timeout-ms can be set here too
 ```
 
@@ -501,16 +508,16 @@ options:
 Delete the stale cassette, flip the record mode, run the one spec:
 
 ```sh
-rm src/main/ruby/<name>/tape_library/<cassette_name>.yml
+rm src/test/ruby/<name>/tape_library/<cassette_name>.yml
 ```
 
 ```ruby
-# src/main/ruby/<name>/spec/spec_helper.rb — temporarily
+# src/test/ruby/<name>/spec/spec_helper.rb — temporarily
 c.default_cassette_options = { record: :once }   # was :none
 ```
 
 ```sh
-cd src/main/ruby/<name>
+cd src/test/ruby/<name>
 bundle exec rspec spec/connector_spec.rb -e 'the one example'
 ```
 
@@ -545,7 +552,7 @@ field — the next test run picks it up.
 |--------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `WebMock::NetConnectNotAllowedError`                                                                         | Spec hits a URL not covered by any cassette. Wrap the call in `VCR.use_cassette`, or add a cassette whose request `method`+`uri` matches.                                                                                  |
 | `VCR::Errors::UnhandledHTTPRequestError: An HTTP request has been made that VCR does not know how to handle` | Same as above — no cassette matches the request.                                                                                                                                                                           |
-| `Could not find 'bundler' (X.Y.Z) required by your Gemfile.lock`                                             | Gradle is calling the wrong `bundle` (system Ruby vs. project Ruby). Set `BUNDLE_BIN` to the right executable, or run `cd src/main/ruby/<name> && bundle install` once to let your Ruby manager pick up the right version. |
+| `Could not find 'bundler' (X.Y.Z) required by your Gemfile.lock`                                             | Gradle is calling the wrong `bundle` (system Ruby vs. project Ruby). Set `BUNDLE_BIN` to the right executable, or run `cd src/test/ruby/<name> && bundle install` once to let your Ruby manager pick up the right version. |
 | Tests pass locally but fail in CI                                                                            | Different Ruby version. Check `.tool-versions` is honoured and the CI gemset matches.                                                                                                                                      |
 
 ## Deploying the connector to Workato
@@ -614,7 +621,7 @@ version from the version list.
 
 Scriptable and the only option if you want publishing to happen as part of a
 CI pipeline. Requires the same `workato-connector-sdk` gem the tests use
-(already in each `src/main/ruby/<name>/Gemfile`) and a workspace API token.
+(already in each `src/test/ruby/<name>/Gemfile`) and a workspace API token.
 
 #### 2.1. Create an API client in Workato
 
@@ -625,16 +632,20 @@ Copy the token immediately — you cannot retrieve it later.
 
 #### 2.2. Push
 
+The `Gemfile` + lockfile that pull in `workato-connector-sdk` live under
+`src/test/ruby/<name>/` (same SDK project the specs use), while `connector.rb`
+is under `src/main/ruby/<name>/`. Run `bundle exec` from the test directory
+and point `--connector` at the deliverable:
+
 ```sh
-cd src/main/ruby/<name>
+cd src/test/ruby/<name>
 WORKATO_API_TOKEN='…' bundle exec workato push \
+    --connector ../../../main/ruby/<name>/connector.rb \
     --api-token "$WORKATO_API_TOKEN" \
     --environment https://app.workato.com \
     --notes "release from $(git rev-parse --short HEAD)"
 ```
 
-- `--connector` defaults to `connector.rb` in the current directory — fine for
-  this layout.
 - `--environment` must match your workspace's data center
   (`https://app.workato.com`, `https://app.eu.workato.com`,
   `https://app.au.workato.com`, …).
@@ -650,13 +661,15 @@ the UI (or via the Workato Platform API).
 #### 2.3. Suggested Gradle wiring (optional)
 
 If you want publishing in the same build, add Exec tasks mirroring the test
-ones:
+ones — they live in `src/test/ruby/<name>` (the Gemfile home) and point at
+the connector under `src/main/`:
 
 ```groovy
 task securityPush(type: Exec) {
     group = 'publishing'
-    workingDir file('src/main/ruby/security')
+    workingDir file('src/test/ruby/security')
     commandLine bundleBin(), 'exec', 'workato', 'push',
+            '--connector', '../../../main/ruby/security/connector.rb',
             '--api-token', System.getenv('WORKATO_API_TOKEN'),
             '--environment', System.getenv('WORKATO_BASE_URL') ?: 'https://app.workato.com',
             '--notes', "release from ${project.version}"

@@ -164,8 +164,8 @@ def bundleBin = {
 
 task securityBundleInstall(type: Exec) {
     group = 'verification'
-    description = 'bundle install for src/main/ruby/security.'
-    workingDir file('src/main/ruby/security')
+    description = 'bundle install for src/test/ruby/security.'
+    workingDir file('src/test/ruby/security')
     commandLine bundleBin(), 'install', '--quiet'
 }
 
@@ -173,14 +173,14 @@ task securityRspec(type: Exec) {
     group = 'verification'
     description = 'RSpec for the security Workato connector.'
     dependsOn securityBundleInstall
-    workingDir file('src/main/ruby/security')
+    workingDir file('src/test/ruby/security')
     commandLine bundleBin(), 'exec', 'rspec'
 }
 
 task ntlmBundleInstall(type: Exec) {
     group = 'verification'
-    description = 'bundle install for src/main/ruby/ntlm.'
-    workingDir file('src/main/ruby/ntlm')
+    description = 'bundle install for src/test/ruby/ntlm.'
+    workingDir file('src/test/ruby/ntlm')
     commandLine bundleBin(), 'install', '--quiet'
 }
 
@@ -188,7 +188,7 @@ task ntlmRspec(type: Exec) {
     group = 'verification'
     description = 'RSpec for the ntlm Workato connector.'
     dependsOn ntlmBundleInstall
-    workingDir file('src/main/ruby/ntlm')
+    workingDir file('src/test/ruby/ntlm')
     commandLine bundleBin(), 'exec', 'rspec'
 }
 

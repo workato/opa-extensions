@@ -1,4 +1,4 @@
-package com.mycompany.onprem;
+package com.mycompany.onprem.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.workato.agent.extension.test.AgentExtensionHarness;
@@ -21,7 +21,7 @@ class SecurityExtensionTest {
 
     @RegisterExtension
     static AgentExtensionHarness agent = AgentExtensionHarness.extension("security")
-            .yaml("extensions/security.yml");  // secret: test-secret
+            .yaml("extensions/security.yml");  // signing-secret: test-secret
 
     private static String sign(AgentExtensionHarness h, String payload) throws Exception {
         String json = MAPPER.writeValueAsString(Map.of("payload", payload));
@@ -73,7 +73,7 @@ class SecurityExtensionTest {
     void differentSecretsProduceDifferentSignaturesForSamePayload() throws Exception {
         AgentExtensionHarness altSecret = AgentExtensionHarness.extension("security-alt")
                 .controller(SecurityExtension.class)
-                .property("secret", "other-secret")
+                .property("signing-secret", "other-secret")
                 .start();
         try {
             assertNotEquals(sign(agent, "same-payload"), sign(altSecret, "same-payload"));
