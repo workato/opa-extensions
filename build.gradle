@@ -62,6 +62,19 @@ task validateExtensionJars {
 task extractExtensionReadmes {
     description = 'Extracts README.md from each extension JAR into the extension-api directory.'
     dependsOn validateExtensionJars
+
+    // Declared inputs/outputs make the data flow explicit (JARs → READMEs) and let Gradle
+    // reason about dependency ordering. The upToDateWhen { false } below forces re-extraction
+    // on every build regardless, so hand-edits to the READMEs never persist and the files
+    // always reflect the JARs currently on the classpath (see CLAUDE.md).
+    inputs.files(fileTree(dir: extensionApiDir, include: 'extension-*.jar'))
+            .withPropertyName('extensionJars')
+    outputs.files(
+            new File(extensionApiDir, 'README-extension-api.md'),
+            new File(extensionApiDir, 'README-extension-test.md')
+    ).withPropertyName('extractedReadmes')
+    outputs.upToDateWhen { false }
+
     doLast {
         [['extension-api', 'README-extension-api.md'],
          ['extension-test', 'README-extension-test.md']].each { prefix, outName ->

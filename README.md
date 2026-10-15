@@ -117,6 +117,43 @@ Both files are regenerated from the JARs on every build, so they always match
 the version currently on the classpath. Prefer them over any snippets in this
 README or elsewhere.
 
+#### How the regeneration is wired
+
+The `extractExtensionReadmes` task in `build.gradle` owns the invariant
+*"the two README files always reflect the JARs currently in `extension-api/`"*.
+The mechanism:
+
+1. **Inputs**: `fileTree(dir: 'extension-api', include: 'extension-*.jar')` —
+   the two shipped JARs.
+2. **Outputs**: `extension-api/README-extension-api.md` and
+   `extension-api/README-extension-test.md`.
+3. **Action**: open each JAR as a ZIP, read the `README.md` entry, write it to
+   the corresponding output file. If a JAR has no `README.md` entry the build
+   fails loudly.
+4. **Up-to-date policy**: `outputs.upToDateWhen { false }`. The task is
+   deliberately *never* considered up-to-date, so it re-extracts on every
+   invocation — hand-edits to the output files never survive a build.
+5. **Wiring to the standard graph**:
+   ```groovy
+   tasks.withType(AbstractCompile).configureEach { it.dependsOn extractExtensionReadmes }
+   processResources.dependsOn extractExtensionReadmes
+   ```
+   Every path that compiles Java or packages resources (`./gradlew build`,
+   `check`, `test`, `compileJava`, `assemble`, …) therefore triggers extraction
+   before any Java code runs.
+6. **Precondition**: `extractExtensionReadmes` `dependsOn validateExtensionJars`,
+   so a missing or version-mixed `extension-api/` directory stops the build
+   *before* extraction is attempted.
+
+Operationally this guarantees:
+
+- A fresh `git clone` + `./gradlew build` produces matching READMEs.
+- Bumping the JAR version (e.g. `extension-api-34.0.jar` → `-35.0.jar`) causes
+  the next build to overwrite the READMEs with the new version's content.
+- A README accidentally edited by hand is reverted on the next build.
+- Deleting a README (`rm extension-api/README-extension-api.md`) is harmless —
+  the next build recreates it.
+
 > This repository already contains a wired-up `build.gradle` that applies both
 > JARs to the right scopes. If you start a project from scratch, use the
 > `dependencies { ... }`, `validateExtensionJars` and `extractExtensionReadmes`
@@ -345,20 +382,20 @@ body / status:
 ```yaml
 ---
 http_interactions:
-- request:
-    method: post
-    uri: http://localhost/ext/<profile>/<path>
-    body: { encoding: UTF-8, string: '' }   # ignored by default matcher
-    headers: {}
-  response:
-    status: { code: 200, message: OK }
-    headers:
-      Content-Type: [ application/json ]
-    body:
-      encoding: UTF-8
-      string: '{"signature":"..."}'
-    http_version: '1.1'
-  recorded_at: Thu, 15 Oct 2026 10:00:00 GMT
+  - request:
+      method: post
+      uri: http://localhost/ext/<profile>/<path>
+      body: { encoding: UTF-8, string: '' }   # ignored by default matcher
+      headers: { }
+    response:
+      status: { code: 200, message: OK }
+      headers:
+        Content-Type: [ application/json ]
+      body:
+        encoding: UTF-8
+        string: '{"signature":"..."}'
+      http_version: '1.1'
+    recorded_at: Thu, 15 Oct 2026 10:00:00 GMT
 recorded_with: VCR 6.3.1
 ```
 
