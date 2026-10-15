@@ -120,10 +120,10 @@ public interface AgentExtensionContextV1 {
 }
 ```
 
-| Method                      | What you get                                                                                                                                                                       |
-|-----------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `getProfileName()`          | The YAML key your extension is declared under (`my-extension` in the example above). Stable for the lifetime of the agent.                                                         |
-| `getProfileConfiguration()` | Your extension's YAML section as a map, including the `controller` / `controllerClass` key alongside your custom properties. Snapshot — does not change across agent YAML reloads. |
+| Method                      | What you get                                                                                                                                                                                           |
+|-----------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `getProfileName()`          | The YAML key your extension is declared under (`my-extension` in the example above). Stable for the lifetime of the agent.                                                                             |
+| `getProfileConfiguration()` | Your extension's YAML section as a map, including the `controller` / `controllerClass` key alongside your custom properties. Snapshot — does not change across agent YAML reloads.                     |
 
 > **Each extension sees only its own profile.** There is no API for discovering
 > other extensions' configuration. (Note that this does not provide full

@@ -64,6 +64,156 @@ Given the configuration:
         secret: HA63A3043AMMMM 
 ```
 
+## Development workflow
+
+End-to-end for a new extension. The six steps below mirror the layered test
+pyramid that already covers `SecurityExtension` and `NtlmExtension`; each has
+its own detailed section further down with code, Gradle commands, and
+troubleshooting.
+
+```
+┌────────────────────────────────┐                         ┌──────────────────────────────────┐
+│ 1. Java extension class        │  src/main/java/com/     │ 2. AgentExtensionHarness tests   │
+│    (Spring @RestController)    │  mycompany/onprem/      │    (Spring MockMvc, no agent,    │
+│                                │     <name>/             │     no network)                  │
+└───────────────┬────────────────┘                         └────────────────┬─────────────────┘
+                │                                                           │
+                ▼                                                           ▼
+┌────────────────────────────────┐                         ┌──────────────────────────────────┐
+│ 3. Ruby connector.rb           │  src/main/ruby/<name>/  │ 4. Workato Connector SDK specs   │
+│    (secure_tunnel: true,       │  src/test/ruby/<name>/  │    (RSpec + VCR cassettes,       │
+│     http://localhost/ext/…)    │                         │     no network)                  │
+└───────────────┬────────────────┘                         └────────────────┬─────────────────┘
+                │                                                           │
+                └──────────────────────────┬────────────────────────────────┘
+                                           ▼
+                         ┌────────────────────────────────────────┐
+                         │ 5. DeployedAgentLauncher integration   │
+                         │    tests against a real on-disk OPA    │
+                         │    (openLocalAccess + gateway)         │
+                         └────────────────┬───────────────────────┘
+                                          ▼
+                         ┌────────────────────────────────────────┐
+                         │ 6. Full-chain debug: real recipe in    │
+                         │    Workato cloud → gateway tunnel →    │
+                         │    local agent → IDE breakpoint        │
+                         └────────────────────────────────────────┘
+```
+
+### Step 1 — Write the Java extension class
+
+Put the controller under `src/main/java/com/mycompany/onprem/<name>/`. It is a
+regular Spring `@RestController` the agent will mount at
+`/ext/<profile-name>/...`. Follow `extension-api/README-extension-api.md` for
+the exhaustive contract (allowed packages, injection points, lifecycle). See
+`SecurityExtension.java` / `NtlmExtension.java` for working examples.
+
+Make the controller methods throw only unchecked exceptions — this keeps
+their method references usable with the typed `DeployedAgentLauncher`
+helpers in step 5 (`Ref1..Ref10` do not declare `throws`).
+
+### Step 2 — Unit-test the controller with `AgentExtensionHarness` (no OPA)
+
+Add `<Name>Test` under `src/test/java/com/mycompany/onprem/<name>/`. The
+harness wires your controller into a hermetic Spring `MockMvc` context — no
+Jetty, no classloader isolation, no network. It takes milliseconds and runs
+on every `./gradlew test`.
+
+Covers: `@Autowired AgentExtensionApiV1`, `@Value("${…}")` injection with the
+agent's dot-literal semantics, `/ext/{profile}/*` routing, `@PathVariable` /
+`@RequestBody`, your `@ControllerAdvice` beans. Does *not* cover: Jetty
+specifics, classloader isolation from `lib_ext/`, mTLS tunnel. Full DSL +
+troubleshooting table: see **Java extension tests** below and
+`extension-api/README-extension-test.md`.
+
+### Step 3 — Write the Ruby connector
+
+Put `connector.rb` under `src/main/ruby/<name>/connector.rb`. The filename is
+mandatory (Workato SDK contract). The connector must:
+
+- declare `secure_tunnel: true` — forces every HTTP call through an on-prem
+  agent group instead of leaving Workato's cloud;
+- address the agent as `http://localhost/ext/<profile>/<endpoint>` — literal
+  `localhost` is the sentinel the tunnel resolves to the agent;
+- send header `X-Workato-Connector: enforce` on every request — Workato
+  rejects the call if no on-prem connection group is attached.
+
+The `profile` connection field becomes the extension profile name under
+`extensions:` in the agent's `config.yml` — it has to match exactly.
+
+### Step 4 — Spec the connector with the Workato Connector SDK (no OPA)
+
+Add `src/test/ruby/<name>/spec/connector_spec.rb`. The spec resolves the
+connector via `CONNECTOR_PATH = File.expand_path('../../../../main/ruby/<name>/connector.rb', __dir__).freeze`
+and asserts behaviour against VCR cassettes under `tape_library/`. The
+harness is pinned to `record: :none`, so an unmocked request fails loudly
+rather than silently reaching the network. Full workflow (hand-editing
+cassettes, re-recording against a live agent, cleanup before commit): see
+**Ruby custom-connector tests** below.
+
+### Step 5 — Integration-test against a real OPA (`DeployedAgentLauncher`)
+
+Add `<Name>DeployedTest` under `src/test/java/com/mycompany/onprem/<name>/`.
+This is the first step that touches an actual agent on disk. The launcher
+loads the dist's own `agent-core` + `extension-api` via an isolated
+`URLClassLoader`, drops your extension class into it, writes a merged
+`config.yml`, and runs the agent in-process in the test JVM. Keep these
+tests `@Disabled` — they depend on per-machine state (deployed agent path,
+activated certs) and are run manually from the IDE.
+
+Two complementary modes, both are present in `*DeployedTest`:
+
+- **`openLocalAccess()` + direct HTTP** — opens a local port on the agent
+  and calls the controller via `agent.httpPost(Controller::method, body)` /
+  `agent.requestFor(Controller::method).header(…).build()` + `agent.send(req)`.
+  Verifies the full in-agent path (classloader isolation, Jetty binding,
+  Spring dispatch) without needing the Workato cloud. In this mode the agent
+  does **not** connect to the gateway (by design — see the mode table in
+  `extension-api/README-extension-test.md`).
+- **No `openLocalAccess()` + `awaitGatewayConnected(Duration)`** — the agent
+  stays in full gateway mode and the test blocks until the
+  `"Connected to gateway"` marker appears on stdout. Verifies activation
+  certs + egress to `sg*.workato.com` + mTLS handshake. This is the mode
+  used as the launchpad for step 6.
+
+### Step 6 — Debug the full Workato → OPA chain
+
+Once your `connectsToWorkatoGateway` test consistently passes, use it as a
+long-lived harness for debugging real recipe runs:
+
+1. **Start `<Name>DeployedTest.connectsToWorkatoGateway` in the IDE's
+   Debug runner.** The in-JVM agent completes the mTLS handshake and shows
+   up as online in the Workato workspace's on-prem agent group — exactly as
+   if it were started via `bin/run.sh`.
+2. **Set the controller breakpoint to suspend _only the current thread_,
+   not all threads.** In IntelliJ: right-click the red dot → Suspend →
+   **Thread** (default is **All**). This is non-negotiable — if you suspend
+   all threads, the agent's heartbeat scheduler freezes, the gateway side
+   decides the agent is dead and tears the tunnel down, and the breakpoint
+   just hangs. Thread-suspend keeps the heartbeat loop + Jetty acceptor
+   running while your controller frame is paused.
+3. **Publish the connector to Workato.** Either paste `src/main/ruby/<name>/connector.rb`
+   into the Workato UI editor, or run `workato push` from
+   `src/test/ruby/<name>/` with `--connector ../../../main/ruby/<name>/connector.rb`.
+   See **Deploying the connector to Workato** below for both paths.
+4. **In Workato, build a recipe that calls your action.** Create a
+   Connection against the custom connector, set the `profile` field to the
+   same name the DeployedTest launched (`"security"` / `"ntlm"` by default)
+   and bind it to the on-prem agent group your activated cert belongs to.
+   Any trigger will do — "Run on demand" is the shortest path.
+5. **Trigger the recipe.** The request leaves the Workato cloud → traverses
+   the mTLS tunnel → arrives at the in-JVM agent → hits
+   `/ext/<profile>/<endpoint>` → fires your breakpoint. From that frame the
+   IDE's call stack walks the full chain: `jetty → ExtensionDispatcher →
+   DispatcherServlet → <your controller>`. Step through, mutate variables,
+   evaluate expressions — the rest of the agent keeps serving the gateway
+   on other threads.
+
+This loop is the fastest way to reproduce production-only bugs
+(classloader clashes with `lib_ext/`, Jetty buffering, header handling in
+the tunnel) without any build/deploy churn — rebuild only your extension
+class, re-run the test, iterate.
+
 ## Project setup: Extension API and test-harness JARs
 
 Both the compile and test classpaths depend on two JARs shipped with your
