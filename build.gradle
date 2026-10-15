@@ -17,7 +17,6 @@ project.ext {
 repositories {
     mavenLocal()
     mavenCentral()
-    jcenter()
 }
 
 def extensionApiDir = file("$projectDir/extension-api")
@@ -121,5 +120,74 @@ dependencies {
 
 test {
     useJUnitPlatform()
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat 'full'
+        showStandardStreams = false
+    }
 }
+
+// ---------------------------------------------------------------------------
+// Ruby custom connectors — Workato SDK (workato-connector-sdk gem).
+// Each connector lives in its own self-contained SDK project under
+// src/main/ruby/<name>/. We run `bundle install` once per project, then
+// `bundle exec rspec` to execute the specs against pre-recorded VCR cassettes.
+// Hooks into `check` so the full build runs the Ruby suite alongside Java.
+// ---------------------------------------------------------------------------
+
+// Resolve `bundle` explicitly. Gradle's Exec searches the parent process PATH,
+// not the child's env, so we must hand it an absolute path when the parent's
+// PATH shadows the Ruby we actually want.
+// Preference order:
+//   1. BUNDLE_BIN env var — explicit override (set this on CI if needed).
+//   2. ~/.asdf/shims/bundle — if asdf is installed (user's dev setup).
+//   3. plain `bundle` — fallback (whatever is first on PATH).
+def bundleBin = {
+    def override = System.getenv('BUNDLE_BIN')
+    if (override && new File(override).isFile()) return override
+    def shim = new File("${System.getenv('HOME')}/.asdf/shims/bundle")
+    shim.isFile() ? shim.absolutePath : 'bundle'
+}
+
+task securityBundleInstall(type: Exec) {
+    group = 'verification'
+    description = 'bundle install for src/main/ruby/security.'
+    workingDir file('src/main/ruby/security')
+    commandLine bundleBin(), 'install', '--quiet'
+}
+
+task securityRspec(type: Exec) {
+    group = 'verification'
+    description = 'RSpec for the security Workato connector.'
+    dependsOn securityBundleInstall
+    workingDir file('src/main/ruby/security')
+    commandLine bundleBin(), 'exec', 'rspec'
+}
+
+task ntlmBundleInstall(type: Exec) {
+    group = 'verification'
+    description = 'bundle install for src/main/ruby/ntlm.'
+    workingDir file('src/main/ruby/ntlm')
+    commandLine bundleBin(), 'install', '--quiet'
+}
+
+task ntlmRspec(type: Exec) {
+    group = 'verification'
+    description = 'RSpec for the ntlm Workato connector.'
+    dependsOn ntlmBundleInstall
+    workingDir file('src/main/ruby/ntlm')
+    commandLine bundleBin(), 'exec', 'rspec'
+}
+
+task testRubyConnectors {
+    group = 'verification'
+    description = 'Runs RSpec for every Ruby custom connector using VCR cassettes.'
+    dependsOn securityRspec, ntlmRspec
+}
+
+// Hook into both `test` and `check` so `./gradlew test` also runs the Ruby suite.
+// finalizedBy (not dependsOn) → Ruby runs after Java regardless of Java outcome,
+// so both failures are visible in one build.
+test.finalizedBy testRubyConnectors
+check.dependsOn testRubyConnectors
 

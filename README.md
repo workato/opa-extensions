@@ -137,8 +137,8 @@ Useful standalone Gradle tasks:
 
 - `./gradlew validateExtensionJars` — verify the two JARs without compiling.
 - `./gradlew extractExtensionReadmes` — refresh the extracted README files.
-- `./gradlew test` — run tests against the mocked API (uses
-  `extension-test-<version>.jar`).
+- `./gradlew test` — run the full test suite (Java + Ruby); see the
+  **Testing** sections below for details.
 
 ## Installing the extension to OPA
 
@@ -159,6 +159,526 @@ Useful standalone Gradle tasks:
         controllerClass: com.mycompany.onprem.SecurityExtension
         secret: HA63A3043AMMMM
 ```
+
+## Java extension tests
+
+Unit tests for the on-prem extensions live under
+`src/test/java/com/mycompany/onprem/`. They run against the **mock Extension
+API** shipped as `extension-test-<version>.jar` — no running agent, no
+classloader isolation, no Jetty. The authoritative reference for the mock
+harness itself is
+[`extension-api/README-extension-test.md`](extension-api/README-extension-test.md)
+(generated on every build). The section below is a quick practical overview;
+anything that contradicts the generated reference, trust the reference.
+
+### Running
+
+| Command                                                                                                          | What runs                                                           |
+|------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `./gradlew test`                                                                                                 | Java JUnit **and** Ruby RSpec suites (per-test output for both).    |
+| `./gradlew :test`                                                                                                | Java only.                                                          |
+| `./gradlew :test --tests '*Ntlm*'`                                                                               | Only tests whose fully-qualified name matches the pattern.          |
+| `./gradlew :test --tests 'com.mycompany.onprem.SecurityExtensionTest.computesExpectedSha256OfSecretThenPayload'` | One specific test method.                                           |
+| `./gradlew :test --rerun-tasks`                                                                                  | Force re-run even if nothing changed (useful when a test is flaky). |
+
+Per-test output (`PASSED`/`FAILED`/`SKIPPED`) is enabled via `testLogging` in
+`build.gradle`.
+
+### Writing a new test
+
+Pattern — one `AgentExtensionHarness` per profile. Prefer a `static` field so
+the harness starts once per class:
+
+```java
+import com.workato.agent.extension.test.AgentExtensionHarness;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
+import org.springframework.test.web.servlet.MvcResult;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+
+class MyExtensionTest {
+
+    @RegisterExtension
+    static AgentExtensionHarness agent = AgentExtensionHarness.extension("my-profile")
+            .yaml("extensions/my-profile.yml")          // or .controller(MyExtension.class)
+            .property("some-flag", "true");             // inline overrides win over YAML
+
+    @Test
+    void doesTheThing() throws Exception {
+        MvcResult result = agent.mockMvc()
+                .perform(post(agent.urlFor("/op"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"x\":1}"))
+                .andReturn();
+
+        assertEquals(200, result.getResponse().getStatus());
+        // ... parse body and assert
+    }
+}
+```
+
+Rules of thumb:
+
+- **Never hand-roll a mock of the Extension API.** Use
+  `AgentExtensionHarness`. The harness provides the real
+  `AgentExtensionApiV1`, honours `@Value("${...}")` and
+  `getProfileConfiguration()` with the same semantics as the agent, and
+  mounts the controller behind `/ext/{profile}/*` so request paths match
+  production.
+- **YAML fixtures** live under `src/test/resources/extensions/`. Prefer them
+  when the configuration is non-trivial; fall back to `.property(k, v)` for
+  one-value overrides inside a single test.
+- **Real HTTP** in a test is fine when it's a tiny in-process server. See
+  `NtlmExtensionTest` for the pattern: `com.sun.net.httpserver.HttpServer` on
+  `127.0.0.1:0`, started in `@BeforeEach`, stopped in `@AfterEach`, with
+  `AtomicInteger` counters on each handler to assert how many times a URL was
+  hit (so you can verify, e.g., that malformed input skipped the HTTP call
+  entirely).
+- **Error paths** that throw before Spring MVC can wrap them (e.g.,
+  `IllegalStateException` from a controller) surface as
+  `mockMvc().perform(...)` throwing. Catch it with
+  `assertThrows(Throwable.class, () -> …)` and walk the cause chain —
+  `SecurityExtensionTest.missingSecretRaisesIllegalStateCarryingProfileName`
+  shows the pattern.
+
+### Troubleshooting
+
+| Symptom                                                                | Likely cause                                                                                                                                                  |
+|------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `404` on a path that clearly matches                                   | You hit the raw servlet path (`/op`) instead of the prefixed URL. Use `agent.urlFor("/op")`.                                                                  |
+| `NoSuchBeanDefinitionException` for a service the controller autowires | The harness context does not scan — register the dependency with `.bean(name, instance)` or `.configuration(Config.class)`.                                   |
+| Test method reference doesn't resolve a route                          | Fall back to the explicit `post(agent.urlFor("/path"))` form (see `README-extension-test.md` on the method-reference resolver).                               |
+| Shared harness state bleeds between tests                              | A `@RegisterExtension static` harness is reused across all tests in the class. Make sure handlers / counters are per-instance (`@BeforeEach`) and not static. |
+
+See `extension-api/README-extension-test.md` for the complete harness DSL,
+parent-context inheritance, non-JUnit framework hooks, and the full
+troubleshooting table.
+
+## Ruby custom-connector tests
+
+Each on-prem extension has a companion Workato custom connector (Ruby) under
+`src/main/ruby/<name>/`. Each directory is a **self-contained Workato SDK
+project** so it can be exercised without a running agent and without a Workato
+cloud account.
+
+```
+src/main/ruby/
+├── security/              ← connector for SecurityExtension
+│   ├── connector.rb       ← fixed filename; the Workato SDK requires it
+│   ├── Gemfile
+│   ├── settings.yaml      ← connection fields the specs load as settings
+│   ├── spec/
+│   │   ├── spec_helper.rb
+│   │   └── connector_spec.rb
+│   └── tape_library/      ← VCR cassettes (one YAML per HTTP interaction set)
+└── ntlm/                  ← same layout, calls NtlmExtension
+```
+
+### Running
+
+| Command                                        | What runs                                        |
+|------------------------------------------------|--------------------------------------------------|
+| `./gradlew test`                               | Java JUnit **and** both Ruby RSpec suites.       |
+| `./gradlew testRubyConnectors`                 | Both Ruby suites (no Java).                      |
+| `./gradlew :securityRspec`                     | One Ruby suite.                                  |
+| `./gradlew :ntlmRspec`                         | One Ruby suite.                                  |
+| `cd src/main/ruby/<name> && bundle exec rspec` | Fastest local iteration — skips Gradle entirely. |
+
+Prerequisites: Ruby 3.2.x (pinned in `.tool-versions` for asdf; works with any
+version manager or system Ruby that satisfies it) and `bundler`. The Gradle
+tasks locate `bundle` via `$BUNDLE_BIN` → `~/.asdf/shims/bundle` → `bundle` on
+PATH, in that order. On CI runners that provision Ruby differently
+(e.g., `ruby/setup-ruby`), set `BUNDLE_BIN` if the default lookup picks the
+wrong interpreter.
+
+### Writing a new spec
+
+```ruby
+RSpec.describe 'onprem <name> connector' do
+  let(:settings)  { Workato::Connector::Sdk::Settings.from_default_file }
+  let(:connector) { Workato::Connector::Sdk::Connector.from_file('connector.rb', settings) }
+
+  describe 'actions.<action_name>' do
+    it 'does the thing' do
+      VCR.use_cassette('<cassette_name>') do
+        output = connector.actions.<action_name>.execute(settings, 'field' => 'value')
+        expect(output['something']).to eq(...)
+      end
+    end
+  end
+
+  describe 'methods.<method_name>' do
+    it 'returns the expected value' do
+      expect(connector.methods.<method_name>(settings)).to eq(...)
+    end
+  end
+end
+```
+
+Rules of thumb:
+
+- Any HTTP the connector performs **must** be wrapped in `VCR.use_cassette`.
+  `spec_helper.rb` is configured with `record: :none`, so an unmocked request
+  fails loudly rather than silently reaching the network.
+- Pure Ruby helpers (`methods.*` that don't do HTTP) can be asserted directly
+  without a cassette.
+- `settings.merge('key' => 'value')` to override one field for a single spec
+  without editing `settings.yaml`.
+
+### Working with VCR cassettes
+
+Cassettes live in `src/main/ruby/<name>/tape_library/`. Each file is a plain
+YAML dump of one or more HTTP interactions. The default VCR matcher is
+`[:method, :uri]` — request body and headers are **not** compared, so you can
+change what the connector sends without invalidating a cassette, as long as
+the method and URL stay the same.
+
+#### Hand-editing (default workflow)
+
+Because the agent is a Java process that the Ruby suite never contacts, our
+cassettes are **synthetic** — authored by hand to describe what we expect the
+agent to answer. Pick an existing file as a template and edit the response
+body / status:
+
+```yaml
+---
+http_interactions:
+- request:
+    method: post
+    uri: http://localhost/ext/<profile>/<path>
+    body: { encoding: UTF-8, string: '' }   # ignored by default matcher
+    headers: {}
+  response:
+    status: { code: 200, message: OK }
+    headers:
+      Content-Type: [ application/json ]
+    body:
+      encoding: UTF-8
+      string: '{"signature":"..."}'
+    http_version: '1.1'
+  recorded_at: Thu, 15 Oct 2026 10:00:00 GMT
+recorded_with: VCR 6.3.1
+```
+
+#### Re-recording against a live endpoint
+
+The cassettes currently in the repo were authored by hand. If you want VCR to
+capture a real response instead — because the agent-side contract changed, or
+because you'd rather exercise the real stack once than hand-maintain the YAML
+— the workflow below runs a stand-alone agent (not attached to the Workato
+cloud gateway) and points VCR at it.
+
+Record modes used below:
+
+- `:none` (default here) — never record. Fail if no matching cassette.
+- `:once` — record if cassette is missing, otherwise replay.
+- `:new_episodes` — replay existing interactions, record anything new.
+- `:all` — always record, overwriting.
+
+##### 1. Install the agent
+
+Follow the official install instructions for your platform —
+[Linux (DEB)](https://docs.workato.com/en/on-prem/groups/add-agent/linux-deb),
+[Linux (RPM)](https://docs.workato.com/on-prem/groups/add-agent/linux-rpm.html),
+[macOS](https://docs.workato.com/en/on-prem/groups/add-agent/macos.html),
+or [Windows](https://docs.workato.com/en/on-prem/groups/add-agent/windows).
+We'll refer to the install root as `<AGENT_HOME>`.
+
+##### 2. Install the extension JAR
+
+Build and drop it into the agent's extension directory:
+
+```sh
+./gradlew jar
+mkdir -p <AGENT_HOME>/ext
+cp build/libs/opa-extensions-*.jar <AGENT_HOME>/ext/
+```
+
+##### 3. Configure the agent profiles
+
+Edit `<AGENT_HOME>/conf/config.yml` so the agent knows where the JAR is and
+which extensions to mount. The profile names must match the Ruby
+`settings.yaml` `profile:` field (`security` / `ntlm`).
+
+```yml
+server:
+  classpath: <AGENT_HOME>/ext
+extensions:
+  security:
+    controllerClass: com.mycompany.onprem.SecurityExtension
+    secret: a-local-test-secret
+  ntlm:
+    controllerClass: com.mycompany.onprem.NtlmExtension
+    # connect-timeout-ms / read-timeout-ms can be set here too
+```
+
+##### 4. Start the agent in stand-alone mode
+
+Started without attaching to the Workato gateway, the agent exposes the
+extension HTTP endpoints on a local address you choose via the
+`--connector-listen` option. The exact flag name has not been verified
+against public Workato docs — if `run.sh --help` on your version shows a
+different spelling, use that.
+
+```sh
+# Example — adjust to your platform's run script and desired port
+<AGENT_HOME>/bin/run.sh --connector-listen=http://127.0.0.1:8080
+```
+
+(On Linux/systemd service installs the start command is
+`sudo systemctl start workato-agent.service`; see
+[Run an on-prem agent](https://docs.workato.com/on-prem/agents/run.html) for
+the per-platform specifics.)
+
+Quick sanity check — the agent should answer the mounted route:
+
+```sh
+curl -XPOST -H 'Content-Type: application/json' \
+     -d '{"payload":"hello"}' \
+     http://127.0.0.1:8080/ext/security/computeDigest
+# → {"signature":"..."}
+```
+
+##### 5. Align the connector URL with the live agent
+
+The connectors in this repo hard-code `http://localhost/...` (which is the
+URL shape Workato's secure tunnel expects in production). For local
+recording, those URLs must resolve to the port the agent listens on. Two
+options:
+
+- **Port 80:** start the agent with `--connector-listen=http://127.0.0.1:80`
+  (needs root/`sudo` on macOS/Linux). Then the hard-coded URLs just work.
+- **Any other port:** add a `base_url` field to the connector connection and
+  reference it from each `post(...)` call, e.g.
+  `post("#{connection['base_url']}/ext/#{connection['profile']}/computeDigest", ...)`
+  with `base_url: http://127.0.0.1:8080` added to `settings.yaml` for the
+  recording session. Revert the production URL back to `http://localhost/...`
+  (or keep `base_url` with a `'http://localhost'` default) before shipping —
+  the Workato runtime relies on literal `localhost` to route through the
+  tunnel.
+
+##### 6. Record
+
+Delete the stale cassette, flip the record mode, run the one spec:
+
+```sh
+rm src/main/ruby/<name>/tape_library/<cassette_name>.yml
+```
+
+```ruby
+# src/main/ruby/<name>/spec/spec_helper.rb — temporarily
+c.default_cassette_options = { record: :once }   # was :none
+```
+
+```sh
+cd src/main/ruby/<name>
+bundle exec rspec spec/connector_spec.rb -e 'the one example'
+```
+
+VCR writes `tape_library/<cassette_name>.yml` from whatever the agent
+returned. Future runs replay it.
+
+##### 7. Clean up before committing
+
+- **Revert `record: :none`** in `spec_helper.rb`. Leaving `:once` or
+  `:new_episodes` in the shared helper lets tests silently reach the network
+  on CI.
+- **Revert the connector URL** back to the production `http://localhost/...`
+  form (or remove the test-only `base_url` from `settings.yaml`).
+- **Review the cassette.** VCR captures all headers verbatim, including any
+  session/trace tokens the agent happens to emit — scrub what you don't want
+  checked in.
+- **Run `./gradlew test`** to verify replay works with the new cassette.
+
+If you don't have a live agent, hand-editing the YAML (preceding section)
+is the supported workflow and what the cassettes in this repo were produced
+with.
+
+#### Updating one entry inside a cassette
+
+For a small change (e.g., a different signature in the response) it's usually
+faster to edit the YAML directly than to re-record. Just change the `body`
+field — the next test run picks it up.
+
+### Troubleshooting
+
+| Symptom                                                                                                      | Likely cause                                                                                                                                                                                                               |
+|--------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `WebMock::NetConnectNotAllowedError`                                                                         | Spec hits a URL not covered by any cassette. Wrap the call in `VCR.use_cassette`, or add a cassette whose request `method`+`uri` matches.                                                                                  |
+| `VCR::Errors::UnhandledHTTPRequestError: An HTTP request has been made that VCR does not know how to handle` | Same as above — no cassette matches the request.                                                                                                                                                                           |
+| `Could not find 'bundler' (X.Y.Z) required by your Gemfile.lock`                                             | Gradle is calling the wrong `bundle` (system Ruby vs. project Ruby). Set `BUNDLE_BIN` to the right executable, or run `cd src/main/ruby/<name> && bundle install` once to let your Ruby manager pick up the right version. |
+| Tests pass locally but fail in CI                                                                            | Different Ruby version. Check `.tool-versions` is honoured and the CI gemset matches.                                                                                                                                      |
+
+## Deploying the connector to Workato
+
+Each `src/main/ruby/<name>/connector.rb` must be published to a Workato
+workspace before any recipe can use it. There are two supported paths — the
+Workato UI (manual, no gem needed) and the SDK CLI (`workato push`, scriptable
+and the only option for CI).
+
+### Option 1 — Paste into the Workato UI
+
+Fastest for a one-off or when iterating interactively. No gem required —
+everything happens in the browser.
+
+#### Create the connector (first-time only)
+
+1. In your Workato workspace open **Tools → Connector SDK**.
+2. Click the **New connector** button (top-right of the Connector SDK home).
+3. Choose a starting point — the current options documented by Workato are
+   **Get guided from a Workato template** or **Import OpenAPI specification**.
+   Pick the template path (OpenAPI only applies to REST APIs with a public
+   spec, which doesn't fit the agent proxy case). You'll replace the template
+   code wholesale in the next step.
+4. Enter a title (e.g. *On-prem security (SHA-256)*), description, and logo,
+   then click **Go to editor**.
+
+#### Paste the connector source
+
+5. In the editor, open the **Source code** tab (the CodeMirror-based editor —
+   you'll see the template Ruby there).
+6. Select all of it and replace with the full contents of
+   `src/main/ruby/<name>/connector.rb` from this repository.
+7. Save the draft with **⌘-S** (macOS) / **Ctrl-S** (Windows/Linux).
+   Save-as-draft does not yet make the version usable in recipes — it's a
+   working copy only.
+
+#### Smoke-test from the editor
+
+8. Open the **Connection** panel (right-hand side of the editor), fill in the
+   connection fields (for the security connector that's just `profile`; for
+   NTLM it's `profile` + credentials) and click **Connect**. This runs the
+   `test:` lambda against your agent. A green tick means the agent answered.
+9. Open the **Test code** / **Debugger** tab, pick an action
+   (`sha256_digest` / `get`), supply a sample input, and run it. The response
+   from the live agent is shown in the panel.
+
+#### Release
+
+10. When the draft behaves as expected, click **Release latest version**
+    (top-right). Only released versions are visible to recipes.
+11. In the recipe editor, add a step → search for your connector by title →
+    pick an action.
+
+Subsequent updates: edit the Source code → **Save** → smoke-test → **Release
+latest version**. The UI keeps a version history; previous releases stay
+active until superseded, so you can roll back by re-releasing an older
+version from the version list.
+
+> UI label caveat: Workato tweaks the editor layout from time to time. If a
+> button name below doesn't match what you see, the authoritative reference
+> is [Using the Workato Connector SDK](https://docs.workato.com/developing-connectors/sdk/quickstart/quickstart.html)
+> — the overall flow (new connector → paste → save → release → use in recipe)
+> is stable even when labels drift.
+
+### Option 2 — Push from the CLI (`workato push`)
+
+Scriptable and the only option if you want publishing to happen as part of a
+CI pipeline. Requires the same `workato-connector-sdk` gem the tests use
+(already in each `src/main/ruby/<name>/Gemfile`) and a workspace API token.
+
+#### 2.1. Create an API client in Workato
+
+In the workspace open **Workspace admin → API clients → + Create API client**.
+Grant it the **Get details** permission on the Developer API (minimum required
+by `workato push`); scope the client to your sandbox folder if you have one.
+Copy the token immediately — you cannot retrieve it later.
+
+#### 2.2. Push
+
+```sh
+cd src/main/ruby/<name>
+WORKATO_API_TOKEN='…' bundle exec workato push \
+    --api-token "$WORKATO_API_TOKEN" \
+    --environment https://app.workato.com \
+    --notes "release from $(git rev-parse --short HEAD)"
+```
+
+- `--connector` defaults to `connector.rb` in the current directory — fine for
+  this layout.
+- `--environment` must match your workspace's data center
+  (`https://app.workato.com`, `https://app.eu.workato.com`,
+  `https://app.au.workato.com`, …).
+- `--notes` becomes the version description visible in the UI's version list.
+- `--folder <ID>` optionally targets a specific workspace folder.
+- `--title`, `--description` (path to README), `--logo` (path to PNG/JPG)
+  override the title / description / logo of the published connector.
+
+First push creates the connector; subsequent pushes add a new version — the
+previously-released version stays active until you release the new one from
+the UI (or via the Workato Platform API).
+
+#### 2.3. Suggested Gradle wiring (optional)
+
+If you want publishing in the same build, add Exec tasks mirroring the test
+ones:
+
+```groovy
+task securityPush(type: Exec) {
+    group = 'publishing'
+    workingDir file('src/main/ruby/security')
+    commandLine bundleBin(), 'exec', 'workato', 'push',
+            '--api-token', System.getenv('WORKATO_API_TOKEN'),
+            '--environment', System.getenv('WORKATO_BASE_URL') ?: 'https://app.workato.com',
+            '--notes', "release from ${project.version}"
+}
+```
+
+Do **not** hook this into `check` — it has external side effects.
+
+### Verifying after deployment
+
+- In the recipe editor the custom connector appears under
+  **+ App → <your connector title>**.
+- Open a connection, set `profile` to a profile the agent actually has in
+  `config.yml`, click **Connect**. The connection test lambda runs the same
+  `post('…/computeDigest' | '…/request')` the specs exercise.
+- If the test fails with HTTP 404, the extension isn't mounted on the agent
+  (check the agent log or `agent.getContext().getProfileName()` returns null).
+- If it fails with `Workato::Connector::Sdk::...`-shaped errors, the
+  connector Ruby code is at fault; reproduce locally with
+  `bundle exec rspec` first.
+
+## References
+
+Workato documentation used while building and testing this project. Prefer
+the generated READMEs under `extension-api/` for the Java-side API/mock
+contracts (they are version-matched to the JARs on your classpath); the links
+below cover the surrounding Workato tooling.
+
+### On-prem agent
+
+- [On-prem agent overview](https://docs.workato.com/on-prem/agents.html)
+- [Run an on-prem agent](https://docs.workato.com/on-prem/agents/run.html) — platform-specific start/stop commands.
+- [Monitoring (`--mgmt-listen`)](https://docs.workato.com/on-prem/agents/monitoring.html)
+- [Extensions overview](https://docs.workato.com/on-prem/agents/extension.html) — the production docs for the extension
+  model.
+- Install guides:
+  [Linux DEB](https://docs.workato.com/en/on-prem/groups/add-agent/linux-deb),
+  [Linux RPM](https://docs.workato.com/on-prem/groups/add-agent/linux-rpm.html),
+  [macOS](https://docs.workato.com/en/on-prem/groups/add-agent/macos.html),
+  [Windows](https://docs.workato.com/en/on-prem/groups/add-agent/windows).
+
+### Workato Connector SDK (Ruby)
+
+- [`workato-connector-sdk` on GitHub](https://github.com/workato/workato-connector-sdk) — gem source and README.
+- [SDK CLI — Getting started](https://docs.workato.com/developing-connectors/sdk/cli/guides/getting-started.html) —
+  install, `workato new`, `workato exec`, running tests.
+- [SDK CLI — Commands reference](https://docs.workato.com/en/developing-connectors/sdk/cli/reference/cli-commands.html) —
+  full flag reference for `workato push`, `workato edit`, `workato oauth2`.
+- [SDK CLI — Project directory reference](https://docs.workato.com/developing-connectors/sdk/cli/reference/cli-project-directory-reference.html) —
+  the layout Workato expects (`connector.rb`, `settings.yaml`, `spec/`, `tape_library/`).
+- [SDK CLI — RSpec guide (
+  `connector_spec`)](https://docs.workato.com/developing-connectors/sdk/cli/guides/rspec/connector_spec.html) — test
+  patterns, `Connector.from_file`, VCR integration.
+- [SDK CLI — RSpec reference](https://docs.workato.com/en/developing-connectors/sdk/cli/reference/rspec-commands.html).
+
+### Workato Platform API
+
+- [Custom connectors API](https://docs.workato.com/workato-api/custom_connectors.html) — if you prefer to publish via
+  HTTP instead of `workato push`.
 
 ## Using the extension in Recipe
 

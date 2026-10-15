@@ -59,11 +59,84 @@ Before writing or modifying an extension or its tests:
 If a README is missing, the JARs have not been copied from the agent
 distribution yet. Ask the user to copy them rather than guessing at the API.
 
+## Workato custom connectors (Ruby)
+
+Each on-prem extension has a companion Workato custom connector (a Ruby
+`connector.rb` file) under `src/main/ruby/<name>/`. Each directory is a
+**self-contained Workato SDK project** (connector + Gemfile + settings.yaml +
+specs + VCR cassettes). The connectors are what Workato recipes talk to; the
+agent extensions are what the connectors talk to.
+
+Current connectors:
+
+- `src/main/ruby/security/` → calls `SecurityExtension`
+- `src/main/ruby/ntlm/` → calls `NtlmExtension`
+
+### When adding or editing a connector
+
+- Keep each connector in its own subdirectory under `src/main/ruby/`.
+  The file **must be named `connector.rb`** — the Workato SDK does not accept
+  any other name.
+- `settings.yaml` holds the connection fields the tests need.
+- Specs go in `spec/connector_spec.rb`. Any HTTP the connector performs must be
+  stubbed via VCR cassettes under `tape_library/`. Tests must not touch the
+  network — the harness is configured with `record: :none`.
+- When you add an action that calls a new URL, add a new cassette YAML under
+  `tape_library/` (minimal format: see the existing files).
+
+## Running tests
+
+- **`./gradlew test`** — runs Java JUnit tests (`:test`) and then both Ruby
+  RSpec suites (`:securityRspec`, `:ntlmRspec`) via `finalizedBy`. Both report
+  per-test output; both failures surface in a single build.
+- **`./gradlew check`** — same as above plus any other verification tasks.
+- **`./gradlew :test`** — Java only.
+- **`./gradlew testRubyConnectors`** — both Ruby suites only.
+- **`./gradlew :securityRspec`** / **`./gradlew :ntlmRspec`** — one Ruby suite.
+
+### Writing Java tests
+
+- Tests live under `src/test/java/com/mycompany/onprem/`.
+- JUnit 5 Jupiter. The Extension API mock harness is on the test classpath via
+  `extension-test-<version>.jar` → see `extension-api/README-extension-test.md`
+  for the `AgentExtensionHarness` DSL. Do not hand-roll a mock of the API.
+- Real HTTP in a test is fine when it's a tiny in-process server (see
+  `NtlmExtensionTest` → `com.sun.net.httpserver.HttpServer` on `127.0.0.1:0`).
+
+### Writing Ruby tests
+
+- Test framework: RSpec + VCR + WebMock (all declared in each
+  `src/main/ruby/<name>/Gemfile`).
+- Pattern per spec:
+  ```ruby
+  let(:settings)  { Workato::Connector::Sdk::Settings.from_default_file }
+  let(:connector) { Workato::Connector::Sdk::Connector.from_file('connector.rb', settings) }
+  ```
+  Then invoke:
+    - `connector.actions.<name>.execute(settings, input_hash)`
+    - `connector.methods.<name>(args...)`
+    - `connector.test(settings)` for the connection test lambda.
+- Wrap HTTP-touching tests in `VCR.use_cassette('name') do ... end`. The
+  cassette file is `tape_library/<name>.yml`.
+- No real network: `spec_helper.rb` sets `record: :none`, so an unmocked
+  request fails loudly.
+- To iterate locally without going through Gradle: `cd src/main/ruby/<name>
+  && bundle install && bundle exec rspec`.
+
+## Toolchain
+
+- Java 21, Gradle 8.10.2.
+- Ruby 3.2.8 (pinned via `.tool-versions` for asdf). The Workato SDK gem
+  (`workato-connector-sdk`) is self-contained — no Workato cloud / account
+  needed to run tests.
+- The Gradle `bundleBin` helper locates `bundle` in this order:
+  `$BUNDLE_BIN` → `~/.asdf/shims/bundle` → `bundle` on PATH. If you're on a
+  CI runner that provisions Ruby a different way, set `BUNDLE_BIN` to the
+  resulting bundler executable.
+
 ## Build
 
-- `./gradlew build` — full build; triggers JAR validation and README
-  extraction automatically.
+- `./gradlew build` — full build; triggers JAR validation, README extraction,
+  Java tests, and Ruby tests.
 - `./gradlew validateExtensionJars` — JAR presence/version check only.
 - `./gradlew extractExtensionReadmes` — refresh the two README files.
-
-Java 17, Gradle 7.4.2.
