@@ -136,6 +136,39 @@ class NtlmExtensionTest {
         callOkWithAuth("user:pass");
     }
 
+    @Test
+    void rejectsNonHttpScheme() throws Exception {
+        MvcResult result = agent.mockMvc().perform(post(agent.urlFor("/request"))
+                        .header("X-Workato-NTLM-auth", "user:pass@DOMAIN")
+                        .header("X-Workato-NTLM-url", "file:///etc/passwd"))
+                .andReturn();
+
+        assertEquals(400, result.getResponse().getStatus());
+        assertEquals(0, okHits.get(), "upstream must not be contacted for non-http schemes");
+    }
+
+    @Test
+    void rejectsMalformedUrl() throws Exception {
+        MvcResult result = agent.mockMvc().perform(post(agent.urlFor("/request"))
+                        .header("X-Workato-NTLM-auth", "user:pass@DOMAIN")
+                        .header("X-Workato-NTLM-url", "ht tp://broken url"))
+                .andReturn();
+
+        assertEquals(400, result.getResponse().getStatus());
+        assertEquals(0, okHits.get(), "upstream must not be contacted for malformed URLs");
+    }
+
+    @Test
+    void rejectsUrlWithoutHost() throws Exception {
+        MvcResult result = agent.mockMvc().perform(post(agent.urlFor("/request"))
+                        .header("X-Workato-NTLM-auth", "user:pass@DOMAIN")
+                        .header("X-Workato-NTLM-url", "http:///only-path"))
+                .andReturn();
+
+        assertEquals(400, result.getResponse().getStatus());
+        assertEquals(0, okHits.get(), "upstream must not be contacted when host is missing");
+    }
+
     private void callOkWithAuth(String auth) throws Exception {
         MvcResult result = agent.mockMvc().perform(post(agent.urlFor("/request"))
                         .header("X-Workato-NTLM-auth", auth)

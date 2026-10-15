@@ -23,6 +23,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.net.URI;
+import java.net.URISyntaxException;
+
 @RestController
 public class NtlmExtension {
 
@@ -44,6 +47,30 @@ public class NtlmExtension {
 
     private volatile CloseableHttpClient httpClient;
 
+    private static URI parseHttpUri(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        URI uri;
+        try {
+            uri = new URI(raw);
+        } catch (URISyntaxException e) {
+            return null;
+        }
+        String scheme = uri.getScheme();
+        if (scheme == null) {
+            return null;
+        }
+        scheme = scheme.toLowerCase(java.util.Locale.ROOT);
+        if (!"http".equals(scheme) && !"https".equals(scheme)) {
+            return null;
+        }
+        if (uri.getHost() == null || uri.getHost().isBlank()) {
+            return null;
+        }
+        return uri;
+    }
+
     @PostMapping("/request")
     public String request(@RequestHeader(HEADER_WORKATO_AUTH) String authHeader,
                           @RequestHeader(HEADER_WORKATO_URL) String urlHeader,
@@ -57,6 +84,13 @@ public class NtlmExtension {
             return null;
         }
 
+        URI target = parseHttpUri(urlHeader);
+        if (target == null) {
+            log.warn("[{}] NTLM target URL rejected: {}", profile, urlHeader);
+            httpServletResponse.setStatus(HttpStatus.SC_BAD_REQUEST);
+            return null;
+        }
+
         try {
             CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
             credentialsProvider.setCredentials(AuthScope.ANY,
@@ -65,7 +99,7 @@ public class NtlmExtension {
             HttpClientContext context = HttpClientContext.create();
             context.setCredentialsProvider(credentialsProvider);
 
-            HttpGet httpGet = new HttpGet(urlHeader);
+            HttpGet httpGet = new HttpGet(target);
 
             try (CloseableHttpResponse response = client().execute(httpGet, context)) {
                 HttpEntity entity = response.getEntity();
