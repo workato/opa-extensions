@@ -4,7 +4,8 @@ plugins {
     id 'application'
 }
 
-sourceCompatibility = 17
+sourceCompatibility = 21
+targetCompatibility = 21
 version = '0.2'
 
 project.ext {
@@ -16,10 +17,89 @@ project.ext {
 repositories {
     mavenLocal()
     mavenCentral()
-    jcenter()
 }
 
+def extensionApiDir = file("$projectDir/extension-api")
+
+task validateExtensionJars {
+    description = 'Validates that extension-api and extension-test JARs are present and version-consistent.'
+    doFirst {
+        def copyHint = "\nPlease copy 'extension-api-<version>.jar' and 'extension-test-<version>.jar' " +
+                "from your agent distribution into '${extensionApiDir}'."
+
+        if (!extensionApiDir.isDirectory()) {
+            throw new GradleException("Extension JAR directory '${extensionApiDir}' is missing." + copyHint)
+        }
+
+        def apiJars = extensionApiDir.listFiles({ dir, name -> name ==~ /extension-api-.+\.jar/ } as FilenameFilter) ?: []
+        def testJars = extensionApiDir.listFiles({ dir, name -> name ==~ /extension-test-.+\.jar/ } as FilenameFilter) ?: []
+
+        def missing = []
+        if (apiJars.length == 0) missing << 'extension-api-<version>.jar'
+        if (testJars.length == 0) missing << 'extension-test-<version>.jar'
+        if (missing) {
+            throw new GradleException("Missing required JAR(s) in '${extensionApiDir}': ${missing.join(', ')}." + copyHint)
+        }
+
+        if (apiJars.length > 1) {
+            throw new GradleException(
+                    "Multiple versions of extension-api JAR found: ${apiJars*.name}." + copyHint)
+        }
+        if (testJars.length > 1) {
+            throw new GradleException(
+                    "Multiple versions of extension-test JAR found: ${testJars*.name}." + copyHint)
+        }
+
+        def apiVersion = (apiJars[0].name =~ /extension-api-(.+)\.jar/)[0][1]
+        def testVersion = (testJars[0].name =~ /extension-test-(.+)\.jar/)[0][1]
+        if (apiVersion != testVersion) {
+            throw new GradleException(
+                    "Mixed JAR versions detected: extension-api=${apiVersion}, extension-test=${testVersion}." + copyHint)
+        }
+    }
+}
+
+task extractExtensionReadmes {
+    description = 'Extracts README.md from each extension JAR into the extension-api directory.'
+    dependsOn validateExtensionJars
+
+    // Declared inputs/outputs make the data flow explicit (JARs → READMEs) and let Gradle
+    // reason about dependency ordering. The upToDateWhen { false } below forces re-extraction
+    // on every build regardless, so hand-edits to the READMEs never persist and the files
+    // always reflect the JARs currently on the classpath (see CLAUDE.md).
+    inputs.files(fileTree(dir: extensionApiDir, include: 'extension-*.jar'))
+            .withPropertyName('extensionJars')
+    outputs.files(
+            new File(extensionApiDir, 'README-extension-api.md'),
+            new File(extensionApiDir, 'README-extension-test.md')
+    ).withPropertyName('extractedReadmes')
+    outputs.upToDateWhen { false }
+
+    doLast {
+        [['extension-api', 'README-extension-api.md'],
+         ['extension-test', 'README-extension-test.md']].each { prefix, outName ->
+            def jar = extensionApiDir.listFiles({ dir, name -> name ==~ /${prefix}-.+\.jar/ } as FilenameFilter)[0]
+            def outFile = new File(extensionApiDir, outName)
+            new java.util.zip.ZipFile(jar).withCloseable { zf ->
+                def entry = zf.getEntry('README.md')
+                if (entry == null) {
+                    throw new GradleException("README.md not found in '${jar.name}'.")
+                }
+                zf.getInputStream(entry).withCloseable { input ->
+                    outFile.withOutputStream { out -> out << input }
+                }
+            }
+        }
+    }
+}
+
+tasks.withType(AbstractCompile).configureEach { it.dependsOn extractExtensionReadmes }
+processResources.dependsOn extractExtensionReadmes
+
 dependencies {
+    implementation fileTree(dir: extensionApiDir, include: 'extension-api-*.jar')
+    testImplementation fileTree(dir: extensionApiDir, include: 'extension-test-*.jar')
+
     implementation "org.slf4j:slf4j-api:${slf4jVersion}"
     implementation "org.slf4j:jcl-over-slf4j:${slf4jVersion}"
     implementation "org.slf4j:jul-to-slf4j:${slf4jVersion}"
@@ -45,5 +125,97 @@ dependencies {
     implementation "org.apache.commons:commons-lang3:3.12.0"
     implementation "org.apache.commons:commons-collections4:4.4"
     implementation "org.apache.httpcomponents:httpclient:4.5.14"
+
+    testImplementation "org.springframework:spring-test:${springVersion}"
+    testImplementation "org.junit.jupiter:junit-jupiter:5.10.0"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.10.0"
 }
+
+test {
+    useJUnitPlatform()
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat 'full'
+        showStandardStreams = false
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ruby custom connectors — Workato SDK (workato-connector-sdk gem).
+// Each connector lives in its own self-contained SDK project under
+// src/main/ruby/<name>/. We run `bundle install` once per project, then
+// `bundle exec rspec` to execute the specs against pre-recorded VCR cassettes.
+// Hooks into `check` so the full build runs the Ruby suite alongside Java.
+// ---------------------------------------------------------------------------
+
+// Resolve `bundle` explicitly. Gradle's Exec searches the parent process PATH,
+// not the child's env, so we must hand it an absolute path when the parent's
+// PATH shadows the Ruby we actually want.
+// Preference order:
+//   1. BUNDLE_BIN env var — explicit override (set this on CI if needed).
+//   2. ~/.asdf/shims/bundle — if asdf is installed (user's dev setup).
+//   3. plain `bundle` — fallback (whatever is first on PATH).
+def bundleBin = {
+    def override = System.getenv('BUNDLE_BIN')
+    if (override && new File(override).isFile()) return override
+    def shim = new File("${System.getenv('HOME')}/.asdf/shims/bundle")
+    shim.isFile() ? shim.absolutePath : 'bundle'
+}
+
+// One shared Gemfile + Gemfile.lock live at src/test/ruby/; bundler walks
+// up from any subdir to find them, so a single `bundle install` serves every
+// connector project.
+task rubyBundleInstall(type: Exec) {
+    group = 'verification'
+    description = 'bundle install for the shared src/test/ruby/ Gemfile.'
+    workingDir file('src/test/ruby')
+    commandLine bundleBin(), 'install', '--quiet'
+}
+
+// `-Pspec=<filter>` forwards one example-selector to rspec:
+//   -Pspec='posts the payload'           → bundle exec rspec -e 'posts the payload'
+//   -Pspec=spec/connector_spec.rb:12     → bundle exec rspec spec/connector_spec.rb:12
+// Anything containing '/' or ':' is treated as a path (optionally with line);
+// otherwise as a description substring. No filter → the whole suite runs.
+def rspecCommand = { filter ->
+    def cmd = [bundleBin(), 'exec', 'rspec']
+    if (filter) {
+        def f = filter.toString()
+        cmd += (f.contains('/') || f.contains(':')) ? [f] : ['-e', f]
+    }
+    cmd
+}
+
+def rspecDescription = { connectorName ->
+    "RSpec for the ${connectorName} Workato connector. " +
+            'Filter one example: -Pspec="description substring" or -Pspec=spec/connector_spec.rb[:line].'
+}
+
+task securityRspec(type: Exec) {
+    group = 'verification'
+    description = rspecDescription('security')
+    dependsOn rubyBundleInstall
+    workingDir file('src/test/ruby/security')
+    commandLine rspecCommand(project.findProperty('spec'))
+}
+
+task ntlmRspec(type: Exec) {
+    group = 'verification'
+    description = rspecDescription('ntlm')
+    dependsOn rubyBundleInstall
+    workingDir file('src/test/ruby/ntlm')
+    commandLine rspecCommand(project.findProperty('spec'))
+}
+
+task testRubyConnectors {
+    group = 'verification'
+    description = 'Runs RSpec for every Ruby custom connector using VCR cassettes.'
+    dependsOn securityRspec, ntlmRspec
+}
+
+// Hook into both `test` and `check` so `./gradlew test` also runs the Ruby suite.
+// finalizedBy (not dependsOn) → Ruby runs after Java regardless of Java outcome,
+// so both failures are visible in one build.
+test.finalizedBy testRubyConnectors
+check.dependsOn testRubyConnectors
 

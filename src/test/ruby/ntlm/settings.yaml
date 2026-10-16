@@ -1,0 +1,5 @@
+profile: ntlm
+username: testuser
+password: testpass
+domain: TESTDOMAIN
+workstation: WS01
