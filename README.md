@@ -145,7 +145,7 @@ The `profile` connection field becomes the extension profile name under
 
 Add `src/test/ruby/<name>/spec/connector_spec.rb`. The spec resolves the
 connector via `CONNECTOR_PATH = File.expand_path('../../../../main/ruby/<name>/connector.rb', __dir__).freeze`
-and asserts behaviour against VCR cassettes under `tape_library/`. The
+and asserts behaviour against VCR cassettes under `src/test/resources/tape_library/<name>/`. The
 harness is pinned to `record: :none`, so an unmocked request fails loudly
 rather than silently reaching the network. Full workflow (hand-editing
 cassettes, re-recording against a live agent, cleanup before commit): see
@@ -454,29 +454,43 @@ cloud account.
 
 ```
 src/main/ruby/
-├── security/connector.rb  ← connector for SecurityExtension (fixed filename)
-└── ntlm/connector.rb      ← connector for NtlmExtension
+├── security/connector.rb      ← connector for SecurityExtension (fixed filename)
+└── ntlm/connector.rb          ← connector for NtlmExtension
 
 src/test/ruby/
-├── security/              ← test harness for the security connector
-│   ├── Gemfile            ← pulls in workato-connector-sdk + rspec + vcr + webmock
-│   ├── settings.yaml      ← connection fields the specs load as settings
-│   ├── spec/
-│   │   ├── spec_helper.rb
-│   │   └── connector_spec.rb  ← CONNECTOR_PATH points at ../../../../main/ruby/security/connector.rb
-│   └── tape_library/      ← VCR cassettes (one YAML per HTTP interaction set)
-└── ntlm/                  ← same layout, points at ../../../../main/ruby/ntlm/connector.rb
+├── Gemfile                    ← shared — pulls in workato-connector-sdk + rspec + vcr + webmock
+├── Gemfile.lock               ← shared — one `bundle install` serves both suites
+├── spec_helper.rb             ← shared — VCR + RSpec config
+├── security/                  ← test harness for the security connector
+│   ├── .rspec
+│   ├── settings.yaml          ← connection fields the specs load as settings
+│   └── spec/
+│       ├── spec_helper.rb     ← one-liner: `require_relative '../../spec_helper'`
+│       └── connector_spec.rb  ← CONNECTOR_PATH points at ../../../../main/ruby/security/connector.rb
+└── ntlm/                      ← same layout, points at ../../../../main/ruby/ntlm/connector.rb
+
+src/test/resources/tape_library/
+├── security/                  ← VCR cassettes for the security connector (one YAML per HTTP interaction set)
+└── ntlm/                      ← VCR cassettes for the ntlm connector
 ```
+
+Bundler walks up from any connector subdir to the shared `Gemfile`, so each
+subdirectory still behaves like a standalone SDK project (`cd src/test/ruby/<name>
+&& bundle exec rspec` works unchanged). The shared `spec_helper.rb` resolves
+the per-connector cassette dir by matching the CWD basename to the subdir
+under `src/test/resources/tape_library/`.
 
 ### Running
 
-| Command                                        | What runs                                        |
-|------------------------------------------------|--------------------------------------------------|
-| `./gradlew test`                               | Java JUnit **and** both Ruby RSpec suites.       |
-| `./gradlew testRubyConnectors`                 | Both Ruby suites (no Java).                      |
-| `./gradlew :securityRspec`                     | One Ruby suite.                                  |
-| `./gradlew :ntlmRspec`                         | One Ruby suite.                                  |
-| `cd src/test/ruby/<name> && bundle exec rspec` | Fastest local iteration — skips Gradle entirely. |
+| Command                                                                  | What runs                                                    |
+|--------------------------------------------------------------------------|--------------------------------------------------------------|
+| `./gradlew test`                                                         | Java JUnit **and** both Ruby RSpec suites.                   |
+| `./gradlew testRubyConnectors`                                           | Both Ruby suites (no Java).                                  |
+| `./gradlew :securityRspec`                                               | Whole security suite.                                        |
+| `./gradlew :ntlmRspec`                                                   | Whole ntlm suite.                                            |
+| `./gradlew :securityRspec -Pspec='posts the payload'`                    | One example by description substring (forwarded as `-e`).    |
+| `./gradlew :ntlmRspec -Pspec=spec/connector_spec.rb:12`                  | One example by file:line (path containing `/` or `:` wins).  |
+| `cd src/test/ruby/<name> && bundle exec rspec [spec_path[:line]] [-e …]` | Fastest local iteration — skips Gradle, full rspec CLI.      |
 
 Prerequisites: Ruby 3.2.x (pinned in `.tool-versions` for asdf; works with any
 version manager or system Ruby that satisfies it) and `bundler`. The Gradle
@@ -484,6 +498,34 @@ tasks locate `bundle` via `$BUNDLE_BIN` → `~/.asdf/shims/bundle` → `bundle` 
 PATH, in that order. On CI runners that provision Ruby differently
 (e.g., `ruby/setup-ruby`), set `BUNDLE_BIN` if the default lookup picks the
 wrong interpreter.
+
+### Running a spec from IntelliJ IDEA
+
+**With the JetBrains Ruby plugin (Ultimate or RubyMine).** Point
+*Preferences → Languages & Frameworks → Ruby SDK and Gems* at
+`~/.asdf/installs/ruby/3.2.8/bin/ruby`, enable **Use bundler** under
+*Ruby → RSpec*, and in the RSpec run-configuration template set
+**Working directory** to the per-connector subdir (`src/test/ruby/<name>`) —
+otherwise VCR will look for cassettes relative to the wrong CWD. Afterwards
+the gutter triangles on `describe` / `it` run that example through
+`bundle exec rspec` with the correct working dir.
+
+**Without the Ruby plugin (IDEA Community).** Use the shared `-Pspec`
+forwarding we wired into Gradle via a Gradle run configuration. The IDE
+delegates to our existing `:<name>Rspec` task, which already knows the right
+`workingDir`, bundle, and env:
+
+1. **Run → Edit Configurations → + → Gradle.**
+2. **Tasks:** `:ntlmRspec` (or `:securityRspec`).
+3. **Arguments** — pick one:
+   - *whole file:* `-Pspec=spec/connector_spec.rb`
+   - *single example by `:line`:* `-Pspec=spec/connector_spec.rb:12`
+   - *single example by description:* `-Pspec='posts the payload'`
+   - *whole suite:* leave empty.
+4. Save the config (one per spec file / view you want quick access to).
+
+Convention: each `connector_spec.rb` has a header comment with the exact
+commands for both runners — copy-paste into the IDE run config.
 
 ### Writing a new spec
 
@@ -523,7 +565,7 @@ Rules of thumb:
 
 ### Working with VCR cassettes
 
-Cassettes live in `src/test/ruby/<name>/tape_library/`. Each file is a plain
+Cassettes live in `src/test/resources/tape_library/<name>/`. Each file is a plain
 YAML dump of one or more HTTP interactions. The default VCR matcher is
 `[:method, :uri]` — request body and headers are **not** compared, so you can
 change what the connector sends without invalidating a cassette, as long as
@@ -658,7 +700,7 @@ options:
 Delete the stale cassette, flip the record mode, run the one spec:
 
 ```sh
-rm src/test/ruby/<name>/tape_library/<cassette_name>.yml
+rm src/test/resources/tape_library/<name>/<cassette_name>.yml
 ```
 
 ```ruby
@@ -671,7 +713,7 @@ cd src/test/ruby/<name>
 bundle exec rspec spec/connector_spec.rb -e 'the one example'
 ```
 
-VCR writes `tape_library/<cassette_name>.yml` from whatever the agent
+VCR writes `src/test/resources/tape_library/<name>/<cassette_name>.yml` from whatever the agent
 returned. Future runs replay it.
 
 ##### 7. Clean up before committing
@@ -771,7 +813,7 @@ version from the version list.
 
 Scriptable and the only option if you want publishing to happen as part of a
 CI pipeline. Requires the same `workato-connector-sdk` gem the tests use
-(already in each `src/test/ruby/<name>/Gemfile`) and a workspace API token.
+(declared in the shared `src/test/ruby/Gemfile`) and a workspace API token.
 
 #### 2.1. Create an API client in Workato
 

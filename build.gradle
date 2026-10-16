@@ -162,34 +162,49 @@ def bundleBin = {
     shim.isFile() ? shim.absolutePath : 'bundle'
 }
 
-task securityBundleInstall(type: Exec) {
+// One shared Gemfile + Gemfile.lock live at src/test/ruby/; bundler walks
+// up from any subdir to find them, so a single `bundle install` serves every
+// connector project.
+task rubyBundleInstall(type: Exec) {
     group = 'verification'
-    description = 'bundle install for src/test/ruby/security.'
-    workingDir file('src/test/ruby/security')
+    description = 'bundle install for the shared src/test/ruby/ Gemfile.'
+    workingDir file('src/test/ruby')
     commandLine bundleBin(), 'install', '--quiet'
+}
+
+// `-Pspec=<filter>` forwards one example-selector to rspec:
+//   -Pspec='posts the payload'           → bundle exec rspec -e 'posts the payload'
+//   -Pspec=spec/connector_spec.rb:12     → bundle exec rspec spec/connector_spec.rb:12
+// Anything containing '/' or ':' is treated as a path (optionally with line);
+// otherwise as a description substring. No filter → the whole suite runs.
+def rspecCommand = { filter ->
+    def cmd = [bundleBin(), 'exec', 'rspec']
+    if (filter) {
+        def f = filter.toString()
+        cmd += (f.contains('/') || f.contains(':')) ? [f] : ['-e', f]
+    }
+    cmd
+}
+
+def rspecDescription = { connectorName ->
+    "RSpec for the ${connectorName} Workato connector. " +
+            'Filter one example: -Pspec="description substring" or -Pspec=spec/connector_spec.rb[:line].'
 }
 
 task securityRspec(type: Exec) {
     group = 'verification'
-    description = 'RSpec for the security Workato connector.'
-    dependsOn securityBundleInstall
+    description = rspecDescription('security')
+    dependsOn rubyBundleInstall
     workingDir file('src/test/ruby/security')
-    commandLine bundleBin(), 'exec', 'rspec'
-}
-
-task ntlmBundleInstall(type: Exec) {
-    group = 'verification'
-    description = 'bundle install for src/test/ruby/ntlm.'
-    workingDir file('src/test/ruby/ntlm')
-    commandLine bundleBin(), 'install', '--quiet'
+    commandLine rspecCommand(project.findProperty('spec'))
 }
 
 task ntlmRspec(type: Exec) {
     group = 'verification'
-    description = 'RSpec for the ntlm Workato connector.'
-    dependsOn ntlmBundleInstall
+    description = rspecDescription('ntlm')
+    dependsOn rubyBundleInstall
     workingDir file('src/test/ruby/ntlm')
-    commandLine bundleBin(), 'exec', 'rspec'
+    commandLine rspecCommand(project.findProperty('spec'))
 }
 
 task testRubyConnectors {

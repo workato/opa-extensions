@@ -1,4 +1,19 @@
 # frozen_string_literal: true
+#
+# How to run this spec
+# --------------------
+# From Gradle (works everywhere, uses the shared src/test/ruby/Gemfile):
+#   ./gradlew :securityRspec                                          # whole file
+#   ./gradlew :securityRspec -Pspec='posts the payload'               # one example by description
+#   ./gradlew :securityRspec -Pspec=spec/connector_spec.rb:12         # one example by file:line
+#
+# From IDEA with the JetBrains Ruby plugin (Ultimate / RubyMine):
+#   right-click the gutter triangle on describe/it. Make sure the RSpec
+#   run-config template points Working directory at src/test/ruby/security
+#   (VCR resolves cassette paths from CWD).
+#
+# From IDEA Community (no Ruby plugin): Run → Edit Configurations → + → Gradle,
+#   Tasks: :securityRspec, Arguments: one of the -Pspec=... forms above.
 
 CONNECTOR_PATH = File.expand_path('../../../../main/ruby/security/connector.rb', __dir__).freeze
 

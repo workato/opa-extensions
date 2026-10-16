@@ -1,9 +1,0 @@
-source 'https://rubygems.org'
-
-gem 'workato-connector-sdk'
-
-group :development, :test do
-  gem 'rspec'
-  gem 'vcr'
-  gem 'webmock'
-end

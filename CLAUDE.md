@@ -78,19 +78,38 @@ Current connectors (deliverable → test project):
 - Keep each connector in its own subdirectory under `src/main/ruby/<name>/`.
   The file **must be named `connector.rb`** — the Workato SDK does not accept
   any other name.
-- The matching `src/test/ruby/<name>/` directory holds `settings.yaml` (connection
-  fields the tests load), `spec/connector_spec.rb`, `tape_library/` (VCR
-  cassettes), and the `Gemfile` that pulls in `workato-connector-sdk`.
+- The matching `src/test/ruby/<name>/` directory holds `settings.yaml`
+  (connection fields the tests load) and `spec/connector_spec.rb`. The shared
+  `Gemfile` (`workato-connector-sdk` + rspec + vcr + webmock) and
+  `spec_helper.rb` live one level up at `src/test/ruby/`. VCR cassettes are
+  checked in under `src/test/resources/tape_library/<name>/`.
 - Specs reference the connector via an absolute path pinned at the top of
   `connector_spec.rb` as
   `CONNECTOR_PATH = File.expand_path('../../../../main/ruby/<name>/connector.rb', __dir__).freeze`
   — the relative hop crosses `test → main`, so adjust it carefully if you
   nest spec files deeper.
 - Any HTTP the connector performs must be stubbed via VCR cassettes under
-  `src/test/ruby/<name>/tape_library/`. Tests must not touch the network —
+  `src/test/resources/tape_library/<name>/`. Tests must not touch the network —
   the harness is configured with `record: :none`.
 - When you add an action that calls a new URL, add a new cassette YAML under
-  `src/test/ruby/<name>/tape_library/` (minimal format: see the existing files).
+  `src/test/resources/tape_library/<name>/` (minimal format: see the existing files).
+- **One Gradle task per spec file.** Today we have `:securityRspec` ↔
+  `src/test/ruby/security/spec/connector_spec.rb` and `:ntlmRspec` ↔
+  `src/test/ruby/ntlm/spec/connector_spec.rb`. Any new `*_spec.rb` must get
+  its own `:<name>Rspec` task in `build.gradle` (model it on the existing
+  two — same `rubyBundleInstall` dependency, `workingDir` set to the
+  per-connector dir, `commandLine rspecCommand(project.findProperty('spec'))`).
+  This keeps every spec individually runnable from both CLI and the IDE
+  (one Gradle run-config per task), and it makes the `-Pspec=…` filter
+  behave predictably: it narrows an already-scoped task instead of fanning
+  out across every spec in the project.
+- **Mandatory header comment on every spec.** The first non-shebang block
+  of each `*_spec.rb` must spell out how to run it from Gradle *and* from
+  the IDE (both Ruby-plugin and Community/Gradle-delegate paths). Copy the
+  template from `src/test/ruby/security/spec/connector_spec.rb` and swap
+  the task name + an example-description substring. The comment is the
+  single hand-off between a reader of the spec and someone trying to
+  reproduce one failing example — do not skip it.
 
 ## Running tests
 
@@ -113,8 +132,10 @@ Current connectors (deliverable → test project):
 
 ### Writing Ruby tests
 
-- Test framework: RSpec + VCR + WebMock (all declared in each
-  `src/test/ruby/<name>/Gemfile`).
+- Test framework: RSpec + VCR + WebMock (all declared in the shared
+  `src/test/ruby/Gemfile`; `Gemfile.lock` and `spec_helper.rb` live next to
+  it, each per-connector `spec/spec_helper.rb` is a one-line
+  `require_relative` wrapper).
 - Pattern per spec:
   ```ruby
   CONNECTOR_PATH = File.expand_path('../../../../main/ruby/<name>/connector.rb', __dir__).freeze
@@ -127,7 +148,9 @@ Current connectors (deliverable → test project):
     - `connector.methods.<name>(args...)`
     - `connector.test(settings)` for the connection test lambda.
 - Wrap HTTP-touching tests in `VCR.use_cassette('name') do ... end`. The
-  cassette file is `tape_library/<name>.yml`.
+  cassette file is `src/test/resources/tape_library/<connector>/<name>.yml`
+  (the shared `spec_helper.rb` resolves the `<connector>` subdir from the
+  CWD basename).
 - No real network: `spec_helper.rb` sets `record: :none`, so an unmocked
   request fails loudly.
 - To iterate locally without going through Gradle: `cd src/test/ruby/<name>
