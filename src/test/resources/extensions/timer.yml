@@ -1,0 +1,4 @@
+extensions:
+  timer:
+    controller: com.mycompany.onprem.timer.TimerExtension
+    min-period-seconds: 1

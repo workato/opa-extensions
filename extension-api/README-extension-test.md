@@ -310,12 +310,113 @@ implementation returns: `put`/`remove`/`clear`/`putAll` throw
 configuration, the test fails here rather than silently drifting from
 production behaviour.
 
+## Testing webhook calls — `FakeAgentWebhookApiV1`
+
+If your extension calls `agent.getWebhookApi().send(...)` or `.wakeup(...)`, the harness ships a
+`FakeAgentWebhookApiV1` that captures every attempt and lets you stub responses. Access it with
+`harness.webhookApi()` — no cast needed.
+
+> **Nested-type imports.** The examples below use `CallKind` and `SentCall` (both nested on
+> `FakeAgentWebhookApiV1`) and `RetryPolicy` / `WebhookResponse` / `WebhookDeliveryException`
+> (nested on `AgentWebhookApiV1`). Import them as e.g.
+> `import com.workato.agent.extension.test.FakeAgentWebhookApiV1.CallKind;` or qualify them
+> inline — IDE auto-import handles both.
+
+```java
+@RegisterExtension
+static AgentExtensionHarness agent = AgentExtensionHarness.extension("my-profile")
+        .controller(MyController.class);
+
+@BeforeEach
+void resetWebhookState() {
+    // Class-level harness → same fake across tests; reset log + stubs before each case.
+    agent.webhookApi().reset();
+}
+
+@Test
+void controllerDeliversExpectedPayload() throws Exception {
+    agent.webhookApi()
+        .whenSent("https://recipe/webhook")
+        .thenReturn(200, "{\"ack\":true}");
+
+    agent.mockMvc().perform(agent.request(MyController::fire)
+            .contentType(APPLICATION_JSON).content("{\"x\":1}"));
+
+    var call = agent.webhookApi().lastCall();
+    assertEquals(Map.of("x", 1), call.body());
+    assertEquals(CallKind.SEND, call.kind());
+}
+```
+
+### Stubbing responses
+
+| Matcher                         | Matches…                                 |
+|---------------------------------|------------------------------------------|
+| `whenCalled(url)`               | Any `send` or `wakeup` to the exact URL  |
+| `whenCalledMatching(predicate)` | Any kind, URL filtered by your predicate |
+| `whenSent(url)`                 | Only `send` to the exact URL             |
+| `whenWokenUp(url)`              | Only `wakeup` to the exact URL           |
+
+Each matcher returns a builder with:
+
+| Builder method                   | Behaviour                                                      |
+|----------------------------------|----------------------------------------------------------------|
+| `.thenReturn(status, body)`      | Same response on every attempt                                 |
+| `.thenReturn(WebhookResponse)`   | Same `WebhookResponse` instance on every attempt               |
+| `.thenFail(IOException cause)`   | Fail every attempt with the given exception                    |
+| `.thenFailAll()`                 | Shorthand for a generic IO failure                             |
+| `.thenReturnSequence(r1, r2, …)` | Nth attempt → `rn`; reuses the last entry if attempts > length |
+
+Multiple matching stubs resolve **last-wins** — a broad `@BeforeEach` default plus a narrower
+per-test override is the typical pattern.
+
+### Observing captured calls
+
+```java
+List<SentCall> all     = agent.webhookApi().allCalls();
+List<SentCall> toUrl   = agent.webhookApi().callsFor("https://recipe/webhook");
+List<SentCall> wakeups = agent.webhookApi().callsOfKind(CallKind.WAKEUP);
+SentCall last          = agent.webhookApi().lastCall();   // throws if empty
+```
+
+`SentCall` records one HTTP attempt, so a `send` that retried 3 times produces 3 `SentCall`s
+with the same `url`/`body`/`headers`/`policy` and increasing `attemptNumber`. Exactly one of
+`response()` / `exception()` is non-null per attempt.
+
+### Retry fidelity
+
+The fake honours the full `RetryPolicy` — attempt count, retryable-status predicate, retryable-
+exception predicate, exhaustion → `WebhookDeliveryException`. The one deliberate deviation from
+production is that **all delays are zero** (unit tests must not sleep). The retry count and
+order are preserved exactly as production produces them.
+
+Tune the policy per-test by passing a `RetryPolicy` to the overload:
+
+```java
+agent.webhookApi().setDefaultRetryPolicy(RetryPolicy.DEFAULTS.withAttempts(3));
+// or override per-call via send(url, body, policy)
+```
+
+### Response deserialization
+
+`WebhookResponse.as(Class<T>)` on both fake and production uses a shared Jackson
+`ObjectMapper`:
+
+```java
+Ack ack = agent.webhookApi().lastCall().response().as(Ack.class);
+```
+
+Throws `WebhookResponseException` on `null` body, invalid JSON, or type mismatch. For generic
+types (`List<Foo>`, `Map<String, Bar>`), call `.body()` and parse yourself — a `TypeReference`
+overload is on the V1.1 shortlist.
+
 ## What the harness exposes
 
 | Method                                  | What it returns                                                                                                                                |
 |-----------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------|
 | `mockMvc()`                             | Spring's `MockMvc` for issuing requests                                                                                                        |
 | `agentExtensionApi()`                   | The `AgentExtensionApiV1` the controller sees — handy for direct assertions                                                                    |
+| `webhookApi()`                          | The `FakeAgentWebhookApiV1` the controller sees through `agent.getWebhookApi()` — stub responses, assert against the captured call log         |
 | `webApplicationContext()`               | The underlying `AnnotationConfigWebApplicationContext` for advanced wiring                                                                     |
 | `profileName()`                         | The configured profile name                                                                                                                    |
 | `urlFor(path)`                          | The full request path including the `/ext/{profile}` prefix                                                                                    |
@@ -695,21 +796,21 @@ Builder methods on `DeployedAgentLauncher`:
 
 Accessors on `RunningAgent` (`AutoCloseable`):
 
-| Method                                                     | Returns / effect                                                                                                                                                                                                         |
-|------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `port()`                                                   | Bound TCP port opened by `openLocalAccess(...)`. Throws `IllegalStateException` when local access was not opened.                                                                                                        |
-| `profileName()`                                            | The default profile name.                                                                                                                                                                                                |
-| `profile()`                                                | The final merged body of the default profile.                                                                                                                                                                            |
-| `extensionProfile(name)`                                   | The final merged body of any registered profile.                                                                                                                                                                         |
-| `extensionProfiles()`                                      | Snapshot of all registered profile bodies.                                                                                                                                                                               |
-| `httpGet(Controller::method [, pathVars])`                 | Issues GET at the URL derived from the controller method's `@GetMapping` + the profile mount point (connector mode only). Arity overloads cover controller signatures from zero through ten declared parameters.         |
-| `httpPost(Controller::method, body [, pathVars])`          | Issues POST with a JSON-serialised body (connector mode only). Same ten-arity ladder as `httpGet` — enough for `@RequestBody` plus `@PathVariable` / `@RequestHeader` / `@RequestParam` / … combos.                      |
-| `urlFor(Controller::method [, pathVars])`                  | The full URL (`http://127.0.0.1:{port}/ext/{profile}{route}`) a request to the given controller method would target. Same ten-arity ladder as `httpGet`.                                                                 |
-| `requestFor(Controller::method [, pathVars])`              | An `HttpRequest.Builder` with URL + HTTP method pre-filled from the annotation; caller adds `.header(...)` / `.POST(publisher)` / `.timeout(...)` and finishes with `.build()`. Pairs with `send(request)`.              |
-| `send(HttpRequest)`                                        | Sends the request through the same `HttpClient` the convenience methods use (5-second connect timeout, string body handler).                                                                                             |
-| `awaitGatewayConnected(Duration)`                          | Blocks until `"Connected to gateway"` appears in the agent's log, or times out. Returns the full matching line.                                                                                                          |
-| `classLoader()`                                            | The agent's isolated `URLClassLoader`.                                                                                                                                                                                   |
-| `stop()` / `close()`                                       | Shuts the agent down, restores stdout, releases the classloader.                                                                                                                                                         |
+| Method                                            | Returns / effect                                                                                                                                                                                                 |
+|---------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `port()`                                          | Bound TCP port opened by `openLocalAccess(...)`. Throws `IllegalStateException` when local access was not opened.                                                                                                |
+| `profileName()`                                   | The default profile name.                                                                                                                                                                                        |
+| `profile()`                                       | The final merged body of the default profile.                                                                                                                                                                    |
+| `extensionProfile(name)`                          | The final merged body of any registered profile.                                                                                                                                                                 |
+| `extensionProfiles()`                             | Snapshot of all registered profile bodies.                                                                                                                                                                       |
+| `httpGet(Controller::method [, pathVars])`        | Issues GET at the URL derived from the controller method's `@GetMapping` + the profile mount point (connector mode only). Arity overloads cover controller signatures from zero through ten declared parameters. |
+| `httpPost(Controller::method, body [, pathVars])` | Issues POST with a JSON-serialised body (connector mode only). Same ten-arity ladder as `httpGet` — enough for `@RequestBody` plus `@PathVariable` / `@RequestHeader` / `@RequestParam` / … combos.              |
+| `urlFor(Controller::method [, pathVars])`         | The full URL (`http://127.0.0.1:{port}/ext/{profile}{route}`) a request to the given controller method would target. Same ten-arity ladder as `httpGet`.                                                         |
+| `requestFor(Controller::method [, pathVars])`     | An `HttpRequest.Builder` with URL + HTTP method pre-filled from the annotation; caller adds `.header(...)` / `.POST(publisher)` / `.timeout(...)` and finishes with `.build()`. Pairs with `send(request)`.      |
+| `send(HttpRequest)`                               | Sends the request through the same `HttpClient` the convenience methods use (5-second connect timeout, string body handler).                                                                                     |
+| `awaitGatewayConnected(Duration)`                 | Blocks until `"Connected to gateway"` appears in the agent's log, or times out. Returns the full matching line.                                                                                                  |
+| `classLoader()`                                   | The agent's isolated `URLClassLoader`.                                                                                                                                                                           |
+| `stop()` / `close()`                              | Shuts the agent down, restores stdout, releases the classloader.                                                                                                                                                 |
 
 Static helpers:
 

@@ -4,8 +4,8 @@
 
 package com.mycompany.onprem.security;
 
-import com.workato.agent.extension.api.AgentConfigurationV1;
 import com.workato.agent.extension.api.AgentExtensionApiV1;
+import com.workato.agent.extension.api.AgentExtensionContextV1.AgentConfiguration;
 import jakarta.inject.Inject;
 import org.apache.commons.codec.binary.Hex;
 import org.slf4j.Logger;
@@ -31,7 +31,7 @@ public class SecurityExtension {
     @PostMapping("/computeDigest")
     public Map<String, Object> computeDigest(@RequestBody Map<String, Object> body) {
         String profile = agent.getContext().getProfileName();
-        AgentConfigurationV1 cfg = agent.getContext().getProfileConfiguration();
+        AgentConfiguration cfg = agent.getContext().getProfileConfiguration();
 
         // Avoid the config key name `secret` — the agent's SecretsPreprocessor
         // treats any map containing `secret:` as a secret-provider spec and tries
