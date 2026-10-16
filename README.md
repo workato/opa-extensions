@@ -1,5 +1,5 @@
 
-OPA extension SDK allows customers, external developers/partners to connect to legacy on-prem systems using Java within the Workato Agent infrastructure.
+OPA extension SDK allows  customers, external developers/partners to connect to legacy on-prem systems using Java within the Workato Agent infrastructure.
 
 
 ## Configuration
