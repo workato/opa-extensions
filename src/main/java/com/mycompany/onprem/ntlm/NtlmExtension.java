@@ -2,6 +2,7 @@ package com.mycompany.onprem.ntlm;
 
 import com.workato.agent.extension.api.AgentExtensionApiV1;
 import jakarta.servlet.http.HttpServletResponse;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpStatus;
 import org.apache.http.auth.AuthScope;
@@ -60,7 +61,7 @@ public class NtlmExtension {
     private volatile CloseableHttpClient httpClient;
 
     private static URI parseHttpUri(String raw) {
-        if (raw == null || raw.isBlank()) {
+        if (StringUtils.isBlank(raw)) {
             return null;
         }
         URI uri;
@@ -108,7 +109,7 @@ public class NtlmExtension {
         if (cached != null) {
             return cached;
         }
-        if (allowedHostsRaw == null || allowedHostsRaw.isBlank()) {
+        if (StringUtils.isBlank(allowedHostsRaw)) {
             cached = Collections.emptyList();
         }
         else {

@@ -22,6 +22,37 @@ suffix). The Gradle `validateExtensionJars` task enforces this and fails the
 build if the directory is missing, a JAR is absent, versions are mixed, or
 multiple versions of either JAR are present.
 
+### Dependency scoping — do not revert
+
+The `jar` task produces a **minimal fat jar**: only libraries actually used
+by extension code are shaded in. Anything the agent provides at runtime
+(`extension-api`, Spring, Jackson, Jakarta, SLF4J) is declared `compileOnly`
+and stays out of `build/libs/opa-extensions-<version>.jar`. Shading
+agent-provided types would cause classloader conflicts in the agent — see
+`extension-api/README-extension-api.md` → "do not shade it into your JAR".
+
+Scoping rules — follow them when adding a new dependency:
+
+- **Shaded (`implementation`)** — any new third-party library that the agent
+  does NOT already provide. Today: `commons-codec`, `commons-lang3`. Add a
+  trailing comment pointing at the extension that uses the library.
+- **Provided by the agent (`compileOnly`)** — anything from Spring, Jackson,
+  Jakarta, SLF4J, Apache HttpClient, or further `com.workato.*` packages.
+  Compile against it, do not shade.
+- **Test-only (`testImplementation`)** — anything only the test harness
+  needs. `jackson-dataformat-yaml` (used by `AgentExtensionHarness` to parse
+  YAML fixtures) and `extension-test-*.jar` live here.
+
+The `configurations { testImplementation.extendsFrom compileOnly }` block at
+the top of `dependencies { }` forwards every `compileOnly` entry onto the
+test classpath — Gradle does NOT do this automatically, and without this
+line `AgentExtensionHarness` loses Spring at test runtime.
+
+Verify after any dependency change: `./gradlew clean jar && unzip -l
+build/libs/opa-extensions-*.jar | grep -c org/springframework` must print
+`0`. If a Spring/Jackson/SLF4J class is in the jar you shaded something you
+shouldn't have.
+
 ## Authoritative documentation — read before coding
 
 The Gradle build extracts the README from each JAR into `extension-api/` on
@@ -129,6 +160,41 @@ Current connectors (deliverable → test project):
   for the `AgentExtensionHarness` DSL. Do not hand-roll a mock of the API.
 - Real HTTP in a test is fine when it's a tiny in-process server (see
   `NtlmExtensionTest` → `com.sun.net.httpserver.HttpServer` on `127.0.0.1:0`).
+
+### Mandatory `*DeployedTest` for every extension
+
+Every extension under `src/main/java/com/mycompany/onprem/<name>/` **must**
+have a companion `<Name>ExtensionDeployedTest.java` under
+`src/test/java/com/mycompany/onprem/<name>/` that runs the extension inside
+the real agent via `DeployedAgentLauncher` (see `README-extension-test.md` →
+"Running against the real agent"). This is the only test type that exercises
+classloader isolation, the real Jetty binding, and — in gateway mode — the
+mTLS tunnel to Workato. `AgentExtensionHarness` cannot cover any of these.
+
+Conventions, copied verbatim from `SecurityExtensionDeployedTest` /
+`NtlmExtensionDeployedTest` / `TimerExtensionDeployedTest`:
+
+- `@Disabled("Manual-only — needs deployed+activated agent at AGENT_DIST; run one method per JVM.")`
+  at the class level. These tests mutate process-global state inside the
+  agent (singleton Spring context, Netty loops, …), so run **one `@Test`
+  method per JVM invocation** from the IDE — never the whole class at once.
+- A `private static final Path AGENT_DIST = Paths.get("...")` at the top,
+  pointing at the local deployed+activated agent dist. The path is
+  per-machine — leave it as a constant; the `@Disabled` keeps it out of CI.
+- At minimum two methods:
+    1. **Local-HTTP smoke test** — one or more happy-path calls via
+       `openLocalAccess()` + `agent.httpPost(Controller::method, body)` /
+       `agent.httpGet(Controller::method)`. Asserts controller actually
+       answers through the real agent dispatcher.
+    2. **`connectsToWorkatoGateway`** — no `openLocalAccess()`, call
+       `agent.awaitGatewayConnected(Duration.ofSeconds(60))`, assert the
+       returned line contains `"Connected to gateway"`. Proves the dist's
+       activation certs, trust store, and the extension's bean wiring do
+       not block mTLS startup.
+- If the extension emits outbound HTTP (webhook-style — see
+  `TimerExtension` + `AgentWebhookApiV1`), start a tiny loopback
+  `com.sun.net.httpserver.HttpServer` sink in the test to capture the
+  delivered payload and headers, and assert on them.
 
 ### Writing Ruby tests
 
