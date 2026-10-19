@@ -1,6 +1,22 @@
+OPA extension SDK allows customers, external developers/partners to connect to legacy on-prem systems using Java within
+the Workato Agent infrastructure.
 
-OPA extension SDK allows  customers, external developers/partners to connect to legacy on-prem systems using Java within the Workato Agent infrastructure.
+## Available extensions
 
+Each extension is a standalone Java `@RestController` plus a companion Workato
+custom connector. Per-extension documentation (what it does, what Extension
+API features it demonstrates, HTTP endpoints, YAML keys it reads) lives next
+to its Java class — follow the links.
+
+| Extension                                                             | What it demonstrates                                                                                                                                                                                                                        | HTTP surface                                                            |
+|-----------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
+| **[security](src/main/java/com/mycompany/onprem/security/README.md)** | The minimum-viable extension — `@Inject AgentExtensionApiV1`, YAML read via `getProfileConfiguration()`, one `@PostMapping` endpoint.                                                                                                       | `POST /computeDigest`                                                   |
+| **[ntlm](src/main/java/com/mycompany/onprem/ntlm/README.md)**         | `@Value("${…}")` property injection with defaults, lazy-init of a shared `HttpClient` (DCL pattern), `@RequestHeader`-driven inputs, forwarding upstream status via `HttpServletResponse`.                                                  | `POST /request`                                                         |
+| **[timer](src/main/java/com/mycompany/onprem/timer/README.md)**       | **`AgentWebhookApiV1.send(...)`** with per-profile retry policy, `webhook_subscribe` / `_unsubscribe` HTTP contract, Jackson records with `@JsonProperty`, background `ScheduledExecutorService` with `DisposableBean.destroy()` lifecycle. | `GET /webhook/health`, `POST /webhook/{subscribe,unsubscribe,fire_now}` |
+
+Add a new extension by cloning any of the three subdirectories under
+`src/main/java/com/mycompany/onprem/` and following the six-step **Development
+workflow** below.
 
 ## Configuration
 
@@ -29,47 +45,22 @@ Endpoint request handling logic is defined by Spring REST controller class, prov
 controller class is registered inside an endpoint-specific Spring `WebApplicationContext` and allows retrieving
 configuration properties from the `config.yml` file.
 
-## Endpoint controller sample
+## Endpoint controller shape
 
-Full code can be
-found [here](https://github.com/workato/opa-extensions/blob/master/src/main/java/com/mycompany/onprem/SecurityExtension.java).
+Every extension is a Spring `@RestController` the agent mounts at
+`/ext/{profile}/...`. The authoritative API surface — allowed packages,
+injection points, lifecycle, and a worked example — is in
+[`extension-api/README-extension-api.md`](extension-api/README-extension-api.md),
+which the build regenerates from the Extension API JAR on every compile.
 
-```java
-package com.mycompany.onprem;
-
-// import rest of the packages here:
-@Controller
-public class SecurityExtension {
-
-    @Inject
-    private Environment env;
-
-    @RequestMapping(method = RequestMethod.POST)
-    public @ResponseBody Map<String, Object> computeDigest(@RequestBody Map<String, Object> body) throws Exception {
-        Charset encoding = Charset.forName("UTF-8");
-        String payload = (String) body.get("payload");
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        digest.update(env.getProperty("secret").getBytes(encoding));
-        byte[] result = digest.digest(payload.getBytes(encoding));
-        return Collections.singletonMap("signature", Hex.encodeHexString(result));
-    }
-}
-```
-
-Given the configuration:
-
-```yml
-    extensions:
-      security:
-        controllerClass: com.mycompany.onprem.security.SecurityExtension
-        secret: HA63A3043AMMMM 
-```
+For concrete examples of each pattern in use, open the per-extension READMEs
+linked in the **Available extensions** table above.
 
 ## Development workflow
 
 End-to-end for a new extension. The six steps below mirror the layered test
-pyramid that already covers `SecurityExtension` and `NtlmExtension`; each has
-its own detailed section further down with code, Gradle commands, and
+pyramid that already covers every extension in **Available extensions** above;
+each has its own detailed section further down with code, Gradle commands, and
 troubleshooting.
 
 ```
@@ -103,11 +94,14 @@ troubleshooting.
 
 ### Step 1 — Write the Java extension class
 
-Put the controller under `src/main/java/com/mycompany/onprem/<name>/`. It is a
-regular Spring `@RestController` the agent will mount at
-`/ext/<profile-name>/...`. Follow `extension-api/README-extension-api.md` for
-the exhaustive contract (allowed packages, injection points, lifecycle). See
-`SecurityExtension.java` / `NtlmExtension.java` for working examples.
+Put the controller under `src/main/java/com/mycompany/onprem/<name>/` along
+with a `README.md` next to it (what it does + which Extension API features it
+demonstrates — mirror the shape of the existing per-extension READMEs linked
+in **Available extensions**). It is a regular Spring `@RestController` the
+agent will mount at `/ext/<profile-name>/...`. Follow
+`extension-api/README-extension-api.md` for the exhaustive contract (allowed
+packages, injection points, lifecycle). Any existing extension listed in
+**Available extensions** is a working example.
 
 Make the controller methods throw only unchecked exceptions — this keeps
 their method references usable with the typed `DeployedAgentLauncher`
@@ -319,7 +313,34 @@ Steps to build an extension:
    (see the preceding section).
 3. Run `./gradlew jar` — this also triggers `validateExtensionJars` and
    `extractExtensionReadmes`.
-4. The output is in `build/libs`.
+4. The output is `build/libs/opa-extensions-<version>.jar`.
+
+The `jar` task produces a **minimal fat jar** — it bundles only the Apache
+libraries that extension code actually imports (today: `commons-codec` for
+`Hex`, `commons-lang3` for `StringUtils`), plus our own classes under
+`com/mycompany/onprem/`. Everything else the agent provides at runtime —
+`extension-api`, Spring, Jackson, Jakarta, SLF4J, Apache HttpClient — is
+declared `compileOnly` in `build.gradle` and is **not** shaded. Packaging
+what the agent already loads would cause classloader conflicts (see
+`extension-api/README-extension-api.md` → "Add the API as a provided-scope
+dependency") and bloat the deliverable; today the jar weighs under 1 MB.
+
+When you add a new third-party dependency, decide its scope with one
+question: *does the agent itself provide this at runtime?*
+
+- **Yes** (any Spring / Jackson / Jakarta / SLF4J / Apache HttpClient
+  module, further `com.workato.*` types) → `compileOnly`. Nothing extra
+  for tests — the `configurations { testImplementation.extendsFrom
+  compileOnly }` block near the top of `dependencies { }` already forwards
+  every `compileOnly` entry onto the test classpath, so
+  `AgentExtensionHarness` keeps working.
+- **No** (anything else — any new Apache Commons module, any client library
+  for the system this extension talks to) → `implementation`. It gets
+  shaded into the fat jar. Add a one-line comment next to the entry
+  pointing at the extension that uses it.
+
+The build strips third-party JAR signatures (`META-INF/*.SF` / `*.DSA` /
+`*.RSA`) so the merged archive loads without `SignatureException`.
 
 Useful standalone Gradle tasks:
 
@@ -455,24 +476,27 @@ cloud account.
 
 ```
 src/main/ruby/
-├── security/connector.rb      ← connector for SecurityExtension (fixed filename)
-└── ntlm/connector.rb          ← connector for NtlmExtension
+├── security/connector.rb      ← one connector.rb per extension (filename is fixed by the SDK)
+├── ntlm/connector.rb
+└── timer/connector.rb
 
 src/test/ruby/
 ├── Gemfile                    ← shared — pulls in workato-connector-sdk + rspec + vcr + webmock
-├── Gemfile.lock               ← shared — one `bundle install` serves both suites
+├── Gemfile.lock               ← shared — one `bundle install` serves every suite
 ├── spec_helper.rb             ← shared — VCR + RSpec config
-├── security/                  ← test harness for the security connector
+├── security/                  ← test harness for one connector
 │   ├── .rspec
 │   ├── settings.yaml          ← connection fields the specs load as settings
 │   └── spec/
 │       ├── spec_helper.rb     ← one-liner: `require_relative '../../spec_helper'`
-│       └── connector_spec.rb  ← CONNECTOR_PATH points at ../../../../main/ruby/security/connector.rb
-└── ntlm/                      ← same layout, points at ../../../../main/ruby/ntlm/connector.rb
+│       └── connector_spec.rb  ← CONNECTOR_PATH points at ../../../../main/ruby/<name>/connector.rb
+├── ntlm/                      ← same layout
+└── timer/                     ← same layout
 
 src/test/resources/tape_library/
-├── security/                  ← VCR cassettes for the security connector (one YAML per HTTP interaction set)
-└── ntlm/                      ← VCR cassettes for the ntlm connector
+├── security/                  ← VCR cassettes per connector (one YAML per HTTP interaction set)
+├── ntlm/
+└── timer/
 ```
 
 Bundler walks up from any connector subdir to the shared `Gemfile`, so each
@@ -483,15 +507,14 @@ under `src/test/resources/tape_library/`.
 
 ### Running
 
-| Command                                                                  | What runs                                                    |
-|--------------------------------------------------------------------------|--------------------------------------------------------------|
-| `./gradlew test`                                                         | Java JUnit **and** both Ruby RSpec suites.                   |
-| `./gradlew testRubyConnectors`                                           | Both Ruby suites (no Java).                                  |
-| `./gradlew :securityRspec`                                               | Whole security suite.                                        |
-| `./gradlew :ntlmRspec`                                                   | Whole ntlm suite.                                            |
-| `./gradlew :securityRspec -Pspec='posts the payload'`                    | One example by description substring (forwarded as `-e`).    |
-| `./gradlew :ntlmRspec -Pspec=spec/connector_spec.rb:12`                  | One example by file:line (path containing `/` or `:` wins).  |
-| `cd src/test/ruby/<name> && bundle exec rspec [spec_path[:line]] [-e …]` | Fastest local iteration — skips Gradle, full rspec CLI.      |
+| Command                                                                  | What runs                                                            |
+|--------------------------------------------------------------------------|----------------------------------------------------------------------|
+| `./gradlew test`                                                         | Java JUnit **and** every Ruby RSpec suite.                           |
+| `./gradlew testRubyConnectors`                                           | Every Ruby suite (no Java).                                          |
+| `./gradlew :<name>Rspec`                                                 | One Ruby suite — e.g. `:securityRspec`, `:ntlmRspec`, `:timerRspec`. |
+| `./gradlew :<name>Rspec -Pspec='posts the payload'`                      | One example by description substring (forwarded as `-e`).            |
+| `./gradlew :<name>Rspec -Pspec=spec/connector_spec.rb:12`                | One example by file:line (path containing `/` or `:` wins).          |
+| `cd src/test/ruby/<name> && bundle exec rspec [spec_path[:line]] [-e …]` | Fastest local iteration — skips Gradle, full rspec CLI.              |
 
 Prerequisites: Ruby 3.2.x (pinned in `.tool-versions` for asdf; works with any
 version manager or system Ruby that satisfies it) and `bundler`. The Gradle
@@ -517,12 +540,12 @@ delegates to our existing `:<name>Rspec` task, which already knows the right
 `workingDir`, bundle, and env:
 
 1. **Run → Edit Configurations → + → Gradle.**
-2. **Tasks:** `:ntlmRspec` (or `:securityRspec`).
+2. **Tasks:** `:<name>Rspec` — one of `:securityRspec`, `:ntlmRspec`, `:timerRspec`.
 3. **Arguments** — pick one:
-   - *whole file:* `-Pspec=spec/connector_spec.rb`
-   - *single example by `:line`:* `-Pspec=spec/connector_spec.rb:12`
-   - *single example by description:* `-Pspec='posts the payload'`
-   - *whole suite:* leave empty.
+    - *whole file:* `-Pspec=spec/connector_spec.rb`
+    - *single example by `:line`:* `-Pspec=spec/connector_spec.rb:12`
+    - *single example by description:* `-Pspec='posts the payload'`
+    - *whole suite:* leave empty.
 4. Save the config (one per spec file / view you want quick access to).
 
 Convention: each `connector_spec.rb` has a header comment with the exact
@@ -923,39 +946,13 @@ below cover the surrounding Workato tooling.
 - [Custom connectors API](https://docs.workato.com/workato-api/custom_connectors.html) — if you prefer to publish via
   HTTP instead of `workato push`.
 
-## Using the extension in Recipe
+## Using an extension in a recipe
 
-In order to use the extension in a recipe, we need a custom adapter in Workato. Sample adapter for the extension
-can be
-found [here](https://github.com/workato/connector_sdk/blob/master/custom_connectors/basic_auth/onprem_security.rb).
+Each extension ships with a companion Workato custom connector under
+`src/main/ruby/<name>/connector.rb`. The connector is what the recipe talks
+to; the extension is what the connector talks to. For the per-connector
+contract (actions, triggers, connection fields), open the matching
+per-extension README linked in the **Available extensions** table above.
 
-```ruby
-{
-  title: 'On-prem security',
-  secure_tunnel: true,
-
-  connection: {
-    fields: [{ name: 'profile', hint: 'On-prem security connection profile' }],
-    authorization: { type: 'none'}
-  },
-
-  test: ->(connection) {
-    post("http://localhost/ext/#{connection['profile']}/computeDigest", { payload: 'test' }).headers('X-Workato-Connector': 'enforce')
-  },
-
-  actions: {
-    sha256_digest: {
-
-      title: 'Create SHA-256 digest',
-      description: 'Create <span class="provider">SHA-256</span> digest',
-
-      input_fields: ->(_) { [{ name: 'payload' }] },
-      output_fields: ->(_) { [{name: 'signature'}] },
-
-      execute: ->(connection, input) {
-        post("http://localhost/ext/#{connection['profile']}/computeDigest", input).headers('X-Workato-Connector': 'enforce')
-      }
-    }
-  }
-}
-```
+To publish and wire up a connector in a Workato workspace, see
+**Deploying the connector to Workato** earlier in this document.

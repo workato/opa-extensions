@@ -3,6 +3,7 @@ package com.mycompany.onprem.timer;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.workato.agent.extension.api.AgentExtensionApiV1;
 import com.workato.agent.extension.api.AgentWebhookApiV1.WebhookResponse;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
@@ -38,6 +39,10 @@ public class TimerExtension implements DisposableBean {
 
     @PostMapping("/subscribe")
     public ResponseEntity<?> subscribe(@RequestBody SubscribeRequest req) {
+        if (StringUtils.isBlank(req.message())) {
+            return ResponseEntity.badRequest()
+                    .body(new ErrorResponse("message must not be blank"));
+        }
         if (req.periodSeconds() == null || req.periodSeconds() < minPeriodSeconds) {
             return ResponseEntity.badRequest()
                     .body(new ErrorResponse("period_seconds must be >= " + minPeriodSeconds));

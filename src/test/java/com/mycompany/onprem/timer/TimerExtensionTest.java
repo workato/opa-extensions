@@ -117,6 +117,19 @@ class TimerExtensionTest {
     }
 
     @Test
+    void subscribeWithBlankMessageReturns400() throws Exception {
+        String json = MAPPER.writeValueAsString(Map.of(
+                "workato_webhook_url", "https://recipe/wh",
+                "recipe_id", "r", "connection_id", "c",
+                "message", "   ", "period_seconds", 5));
+        MvcResult result = postJson(agent, "/webhook/subscribe", json);
+        assertEquals(400, result.getResponse().getStatus());
+        ErrorResponse err = MAPPER.readValue(result.getResponse().getContentAsString(), ErrorResponse.class);
+        assertTrue(err.error().contains("message must not be blank"),
+                "unexpected error: " + err.error());
+    }
+
+    @Test
     void subscribeBelowMinReturns400() throws Exception {
         AgentExtensionHarness strict = AgentExtensionHarness.extension("timer-strict")
                 .controller(TimerExtension.class)

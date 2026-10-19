@@ -96,39 +96,57 @@ task extractExtensionReadmes {
 tasks.withType(AbstractCompile).configureEach { it.dependsOn extractExtensionReadmes }
 processResources.dependsOn extractExtensionReadmes
 
+// Make everything in `compileOnly` also visible to the test classpath. Gradle
+// does NOT propagate compileOnly to tests by default, so without this the
+// AgentExtensionHarness tests would lose Spring/Jackson/Jakarta/SLF4J at test
+// runtime and fail with ClassNotFoundException.
+configurations {
+    testImplementation.extendsFrom compileOnly
+}
+
 dependencies {
-    implementation fileTree(dir: extensionApiDir, include: 'extension-api-*.jar')
+    // ---- Provided by the agent at runtime — compileOnly, NOT shaded ----
+    //
+    // extension-api is the API we compile against; the agent exposes it at
+    // runtime. Shading it would cause classloader conflicts (see
+    // extension-api/README-extension-api.md).
+    compileOnly fileTree(dir: extensionApiDir, include: 'extension-api-*.jar')
     testImplementation fileTree(dir: extensionApiDir, include: 'extension-test-*.jar')
 
-    implementation "org.slf4j:slf4j-api:${slf4jVersion}"
-    implementation "org.slf4j:jcl-over-slf4j:${slf4jVersion}"
-    implementation "org.slf4j:jul-to-slf4j:${slf4jVersion}"
-    implementation "org.slf4j:log4j-over-slf4j:${slf4jVersion}"
+    // Spring, Jackson, Jakarta, SLF4J — the agent is itself a Spring app and
+    // provides all four stacks at runtime. We compile against them (every
+    // extension uses @RestController / @Value / @JsonProperty / @Inject /
+    // Logger), but packaging them would duplicate code the agent already has.
+    compileOnly "org.springframework:spring-context:${springVersion}"
+    compileOnly "org.springframework:spring-webmvc:${springVersion}"
 
-    implementation "jakarta.servlet:jakarta.servlet-api:6.0.0"
-    implementation "jakarta.websocket:jakarta.websocket-api:2.1.0"
-    implementation "jakarta.validation:jakarta.validation-api:3.0.2"
-    implementation "jakarta.inject:jakarta.inject-api:2.0.1"
+    compileOnly "com.fasterxml.jackson.core:jackson-core:${jacksonVersion}"
+    compileOnly "com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}"
 
-    implementation "org.springframework:spring-context:${springVersion}"
-    implementation "org.springframework:spring-jdbc:${springVersion}"
-    implementation "org.springframework:spring-jms:${springVersion}"
-    implementation "org.springframework:spring-webmvc:${springVersion}"
+    compileOnly "jakarta.servlet:jakarta.servlet-api:6.0.0"
+    compileOnly "jakarta.inject:jakarta.inject-api:2.0.1"
 
-    implementation "com.fasterxml.jackson.core:jackson-core:${jacksonVersion}"
-    implementation "com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}"
-    implementation "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:${jacksonVersion}"
+    compileOnly "org.slf4j:slf4j-api:${slf4jVersion}"
 
-    implementation "commons-io:commons-io:2.11.0"
-    implementation "commons-codec:commons-codec:1.15"
-    implementation "net.sf.jopt-simple:jopt-simple:5.0.3"
-    implementation "org.apache.commons:commons-lang3:3.12.0"
-    implementation "org.apache.commons:commons-collections4:4.4"
-    implementation "org.apache.httpcomponents:httpclient:4.5.14"
+    // Apache HttpClient 4 — the agent ships it as part of its own runtime, so
+    // NtlmExtension can import org.apache.http.* without us shading it in.
+    compileOnly "org.apache.httpcomponents:httpclient:4.5.14"
+
+    // ---- Actually used by extension code — shaded into the fat jar ----
+    //
+    // Keep the comment next to each entry pointing at the one or two source
+    // files that reference the library, so a future reader can confirm the
+    // dependency is still needed before upgrading or dropping it.
+    implementation "commons-codec:commons-codec:1.15"                // SecurityExtension — Hex
+    implementation "org.apache.commons:commons-lang3:3.12.0"         // NtlmExtension, TimerExtension — StringUtils
 
     testImplementation "org.springframework:spring-test:${springVersion}"
     testImplementation "org.junit.jupiter:junit-jupiter:5.10.0"
     testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.10.0"
+    // AgentExtensionHarness parses the YAML fixtures under
+    // src/test/resources/extensions/ via jackson-dataformat-yaml. Not referenced
+    // by any extension production code, so it stays strictly on the test side.
+    testImplementation "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:${jacksonVersion}"
 }
 
 test {
@@ -138,6 +156,26 @@ test {
         exceptionFormat 'full'
         showStandardStreams = false
     }
+}
+
+// ---------------------------------------------------------------------------
+// Fat jar — bundle every runtime dependency into build/libs/opa-extensions-*.jar
+// so the deliverable is a single file that drops into the agent's lib_ext/.
+// extension-api is declared compileOnly above, so it is NOT on runtimeClasspath
+// and therefore is NOT shaded here — exactly as README-extension-api.md requires
+// ("The API is compile-only / provided — do not shade it into your JAR. The
+//  agent provides it at runtime; shading would cause classloader conflicts").
+// ---------------------------------------------------------------------------
+jar {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    // Strip signatures from third-party JARs — otherwise the JVM rejects the
+    // merged archive on load with "SignatureException: invalid signature file digest".
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
 }
 
 // ---------------------------------------------------------------------------
