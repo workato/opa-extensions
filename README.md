@@ -20,7 +20,7 @@ workflow** below.
 
 ## Configuration
 
-Extension mechanism is enabled by adding the `extensions` section to the config file, `conf/config.yml`:
+Extension mechanism is  enabled by adding the `extensions` section to the config file, `conf/config.yml`:
 
 ```yml
     server:
