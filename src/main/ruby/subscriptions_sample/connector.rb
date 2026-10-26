@@ -1,16 +1,16 @@
-# Workato custom connector for the SubscriptionsExtension on-prem agent extension.
+# Workato custom connector for the SubscriptionsSampleExtension on-prem agent extension.
 #
 # Companion for:
-#   src/main/java/com/mycompany/onprem/subscriptions/SubscriptionsExtension.java
+#   src/main/java/com/mycompany/onprem/subscriptions_sample/SubscriptionsSampleExtension.java
 # Agent endpoint:
-#   GET /ext/subscriptions/{connection-id}/inspect
+#   GET /ext/subscriptions_sample/{connection-id}/inspect
 #
-# The extension is cloud-managed (@AgentConfigSupport(name = "subscriptions") on
-# the Java class), so the adapter segment of the URL is fixed ("subscriptions")
+# The extension is cloud-managed (@AgentConfigSupport(name = "subscriptions_sample") on
+# the Java class), so the adapter segment of the URL is fixed ("subscriptions_sample")
 # and the second segment is SharedAccount#id. In production the Workato SDK
 # framework populates `connection['_connection_id']` automatically for every
 # connector with `secure_tunnel: true`; in the standalone SDK-tester the test
-# `settings.yaml` supplies the id by hand (see src/test/ruby/subscriptions/
+# `settings.yaml` supplies the id by hand (see src/test/ruby/subscriptions_sample/
 # settings.yaml and the PLAN.md Open item #1).
 #
 # This connector is a demo of the Subscription API — it just forwards the
@@ -18,8 +18,9 @@
 # extension observed through `AgentConnectionLifecycleV1` callbacks and through
 # merged static + connection config.
 {
-  title: 'On-prem subscriptions inspector',
+  title: 'On-prem subscriptions-sample inspector',
   secure_tunnel: true,
+  agent_extension: 'subscriptions_sample',
 
   connection: {
     fields: [
@@ -39,15 +40,15 @@
   # framework from SharedAccount#id. In the standalone tester the value comes
   # from settings.yaml (see Open item #1 in PLAN.md).
   test: ->(connection) {
-    get("http://localhost/ext/subscriptions/#{connection['_connection_id']}/inspect")
+    get("http://localhost/ext/subscriptions_sample/#{connection['_connection_id']}/inspect")
       .headers('X-Workato-Connector': 'enforce')
   },
 
   actions: {
     inspect: {
-      title: 'Inspect subscription state',
+      title: 'Inspect subscriptions-sample state',
       subtitle: 'Return static params, connection params, and lifecycle counters',
-      description: "Fetch <span class='provider'>SubscriptionsExtension</span> state " \
+      description: "Fetch <span class='provider'>SubscriptionsSampleExtension</span> state " \
         "for the current connection",
 
       input_fields: ->(_) { [] },
@@ -87,20 +88,20 @@
       },
 
       execute: ->(connection, _input) {
-        get("http://localhost/ext/subscriptions/#{connection['_connection_id']}/inspect")
+        get("http://localhost/ext/subscriptions_sample/#{connection['_connection_id']}/inspect")
           .headers('X-Workato-Connector': 'enforce')
       },
 
       sample_output: ->(_connection, _input) {
         {
-          'adapter' => 'subscriptions',
+          'adapter' => 'subscriptions_sample',
           'connectionId' => 42,
           'connectionIdFromPath' => 42,
           'connectionVersion' => 1,
           'staticPerAdapter' => {
             'environment' => 'prod',
             'region' => 'us-east-1',
-            'bannerText' => 'subscriptions-demo'
+            'bannerText' => 'subscriptions_sample-demo'
           },
           'connection' => {
             'label-via-supplier' => 'primary',

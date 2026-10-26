@@ -1,4 +1,4 @@
-package com.mycompany.onprem.subscriptions;
+package com.mycompany.onprem.subscriptions_sample;
 
 import com.workato.agent.extension.test.AgentExtensionHarness;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,11 +16,11 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 
 /**
- * Harness-level pinning of {@link SubscriptionsExtension}. Covers:
+ * Harness-level pinning of {@link SubscriptionsSampleExtension}. Covers:
  *
  * <ul>
  *   <li>Static per-adapter keys resolved through raw-type {@code @Value} from
- *       the YAML fixture ({@code extensions.subscriptions.*}).</li>
+ *       the YAML fixture ({@code extensions.subscriptions_sample.*}).</li>
  *   <li>Connection-dynamic keys resolved both via {@code @Value Supplier<T>}
  *       and via {@code getProfileConfiguration().get(...)}, backed by the
  *       harness's {@code .connection(id, Map)} entries.</li>
@@ -29,7 +29,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
  *       counters and per-connection history surfaced in the response.</li>
  * </ul>
  */
-class SubscriptionsExtensionTest {
+class SubscriptionsSampleExtensionTest {
 
     private static final ObjectMapper MAPPER = JsonMapper.builder().build();
 
@@ -40,8 +40,8 @@ class SubscriptionsExtensionTest {
     private static final AtomicLong CURRENT_CONNECTION_ID = new AtomicLong(42L);
 
     @RegisterExtension
-    static AgentExtensionHarness agent = AgentExtensionHarness.extension("subscriptions")
-            .yaml("extensions/subscriptions.yml")
+    static AgentExtensionHarness agent = AgentExtensionHarness.extension("subscriptions_sample")
+            .yaml("extensions/subscriptions_sample.yml")
             .connectionIdSupplier(CURRENT_CONNECTION_ID::get)
             .connection(42L, Map.of(
                     "label", "primary",
@@ -77,7 +77,7 @@ class SubscriptionsExtensionTest {
 
         assertEquals("test", body.at("/staticPerAdapter/environment").asString());
         assertEquals("eu-west-1", body.at("/staticPerAdapter/region").asString());
-        assertEquals("subscriptions-demo", body.at("/staticPerAdapter/bannerText").asString());
+        assertEquals("subscriptions_sample-demo", body.at("/staticPerAdapter/bannerText").asString());
     }
 
     @Test
@@ -164,7 +164,7 @@ class SubscriptionsExtensionTest {
         useConnection(42L);
         JsonNode body = inspect(42L);
 
-        assertEquals("subscriptions", body.at("/adapter").asString());
+        assertEquals("subscriptions_sample", body.at("/adapter").asString());
         assertEquals(42L, body.at("/connectionIdFromPath").asLong());
         assertEquals(42L, body.at("/connectionId").asLong(),
                 "fake's connectionIdSupplier should match the path when test aligns them");

@@ -2,7 +2,7 @@
  * Copyright (c) 2026 MyCompany, Inc. All rights reserved.
  */
 
-package com.mycompany.onprem.subscriptions;
+package com.mycompany.onprem.subscriptions_sample;
 
 import com.workato.agent.extension.api.AgentConfigSupport;
 import com.workato.agent.extension.api.AgentConnectionLifecycleV1;
@@ -31,11 +31,11 @@ import java.util.function.Supplier;
  *
  * <ol>
  *   <li>Static per-adapter — admin-pinned keys from
- *       {@code agent-config-support.subscriptions.*} in the agent's local
+ *       {@code agent-config-support.subscriptions_sample.*} in the agent's local
  *       {@code config.yml}. Resolved once at bean init via raw-type
  *       {@code @Value}.</li>
  *   <li>Connection-dynamic — per-connection keys from
- *       {@code custom.subscriptions.connections.{id}.*} in the cloud push.
+ *       {@code custom.subscriptions_sample.connections.{id}.*} in the cloud push.
  *       Resolved lazily per request via {@code @Value Supplier<T>} and
  *       {@code getProfileConfiguration().get(...)}.</li>
  *   <li>Lifecycle statistics — counters and per-connection history populated
@@ -49,11 +49,11 @@ import java.util.function.Supplier;
  * with all three blocks so a recipe (or {@code curl}) can inspect what the
  * controller is seeing at any point in time.
  */
-@AgentConfigSupport(name = "subscriptions")
+@AgentConfigSupport(name = "subscriptions_sample")
 @RestController
-public class SubscriptionsExtension implements AgentConnectionLifecycleV1 {
+public class SubscriptionsSampleExtension implements AgentConnectionLifecycleV1 {
 
-    private static final Logger log = LoggerFactory.getLogger(SubscriptionsExtension.class);
+    private static final Logger log = LoggerFactory.getLogger(SubscriptionsSampleExtension.class);
 
     // --- lifecycle statistics (populated from AgentConnectionLifecycleV1) ---
     // Controller is a singleton shared across connections and threads, so every
@@ -64,7 +64,7 @@ public class SubscriptionsExtension implements AgentConnectionLifecycleV1 {
     private final ConcurrentHashMap<Long, ConnectionStats> perConnection = new ConcurrentHashMap<>();
 
     // --- static per-adapter (admin-pinned, same value for every connection) ---
-    // Raw-type @Value: Spring resolves against agent-config-support.subscriptions.*
+    // Raw-type @Value: Spring resolves against agent-config-support.subscriptions_sample.*
     // once when the bean is created. If the admin has not set the key, the default
     // after the colon is used.
     @Value("${environment:unknown}")
@@ -138,7 +138,7 @@ public class SubscriptionsExtension implements AgentConnectionLifecycleV1 {
     public void onConnectionAdded(long connectionId, AgentConfiguration mergedConfig) {
         addedCount.incrementAndGet();
         perConnection.put(connectionId, ConnectionStats.firstSeen(mergedConfig));
-        log.info("[subscriptions] connection {} added, keys={}",
+        log.info("[subscriptions_sample] connection {} added, keys={}",
                 connectionId, mergedConfig.keySet());
     }
 
@@ -149,7 +149,7 @@ public class SubscriptionsExtension implements AgentConnectionLifecycleV1 {
                 prior == null
                         ? ConnectionStats.firstSeen(newMergedConfig).withBumpedUpdate(newMergedConfig)
                         : prior.withBumpedUpdate(newMergedConfig));
-        log.info("[subscriptions] connection {} updated, keys={}",
+        log.info("[subscriptions_sample] connection {} updated, keys={}",
                 connectionId, newMergedConfig.keySet());
     }
 
@@ -157,7 +157,7 @@ public class SubscriptionsExtension implements AgentConnectionLifecycleV1 {
     public void onConnectionRemoved(long connectionId) {
         removedCount.incrementAndGet();
         perConnection.remove(connectionId);
-        log.info("[subscriptions] connection {} removed", connectionId);
+        log.info("[subscriptions_sample] connection {} removed", connectionId);
     }
 
     /**

@@ -3,21 +3,21 @@
 # How to run this spec
 # --------------------
 # From Gradle (works everywhere, uses the shared src/test/ruby/Gemfile):
-#   ./gradlew :subscriptionsRspec                                      # whole file
-#   ./gradlew :subscriptionsRspec -Pspec='inspect returns the extension view'  # by description
-#   ./gradlew :subscriptionsRspec -Pspec=spec/connector_spec.rb:30     # by file:line
+#   ./gradlew :subscriptionsSampleRspec                                      # whole file
+#   ./gradlew :subscriptionsSampleRspec -Pspec='inspect returns the extension view'  # by description
+#   ./gradlew :subscriptionsSampleRspec -Pspec=spec/connector_spec.rb:30     # by file:line
 #
 # From IDEA with the JetBrains Ruby plugin (Ultimate / RubyMine):
 #   right-click the gutter triangle on describe/it. Make sure the RSpec
-#   run-config template points Working directory at src/test/ruby/subscriptions
+#   run-config template points Working directory at src/test/ruby/subscriptions_sample
 #   (VCR resolves cassette paths from CWD).
 #
 # From IDEA Community (no Ruby plugin): Run → Edit Configurations → + → Gradle,
-#   Tasks: :subscriptionsRspec, Arguments: one of the -Pspec=... forms above.
+#   Tasks: :subscriptionsSampleRspec, Arguments: one of the -Pspec=... forms above.
 
-CONNECTOR_PATH = File.expand_path('../../../../main/ruby/subscriptions/connector.rb', __dir__).freeze
+CONNECTOR_PATH = File.expand_path('../../../../main/ruby/subscriptions_sample/connector.rb', __dir__).freeze
 
-RSpec.describe 'onprem subscriptions connector' do
+RSpec.describe 'onprem subscriptions_sample connector' do
   let(:settings) { Workato::Connector::Sdk::Settings.from_default_file }
   let(:connector) { Workato::Connector::Sdk::Connector.from_file(CONNECTOR_PATH, settings) }
 
@@ -26,7 +26,7 @@ RSpec.describe 'onprem subscriptions connector' do
       VCR.use_cassette('inspect_connection_42') do
         output = connector.actions.inspect.execute(settings, {})
         expect(output).to be_a(Hash)
-        expect(output['adapter']).to eq('subscriptions')
+        expect(output['adapter']).to eq('subscriptions_sample')
         expect(output['connectionId']).to eq(42)
         expect(output['staticPerAdapter']['environment']).to eq('prod')
         expect(output['connection']['label-via-supplier']).to eq('primary')
@@ -46,7 +46,7 @@ RSpec.describe 'onprem subscriptions connector' do
 
   describe 'test' do
     it 'pings the inspect endpoint without raising' do
-      VCR.use_cassette('subscriptions_connection_test') do
+      VCR.use_cassette('subscriptions_sample_connection_test') do
         expect { connector.test(settings) }.not_to raise_error
       end
     end

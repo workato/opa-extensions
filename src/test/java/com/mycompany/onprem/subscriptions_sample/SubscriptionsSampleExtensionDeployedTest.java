@@ -1,4 +1,4 @@
-package com.mycompany.onprem.subscriptions;
+package com.mycompany.onprem.subscriptions_sample;
 
 import com.workato.agent.extension.test.DeployedAgentLauncher;
 import com.workato.agent.extension.test.DeployedAgentLauncher.RunningAgent;
@@ -13,7 +13,7 @@ import java.time.Duration;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Runs {@link SubscriptionsExtension} inside the real on-prem agent via
+ * Runs {@link SubscriptionsSampleExtension} inside the real on-prem agent via
  * {@link DeployedAgentLauncher}. Manual-only — see
  * {@code extension-api/README-extension-test.md}, section
  * "Running against the real agent": each start() mutates process-global state
@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Run one method at a time from the IDE.
  */
 @Disabled("Manual-only — needs deployed+activated agent at AGENT_DIST; run one method per JVM.")
-class SubscriptionsExtensionDeployedTest {
+class SubscriptionsSampleExtensionDeployedTest {
 
     private static final Path AGENT_DIST = Paths.get("/Users/krocodl/Apps/OPA-Preview-US-34");
 
@@ -34,8 +34,8 @@ class SubscriptionsExtensionDeployedTest {
      */
     @Test
     void inspectAnswersOverLocalHttp() throws Exception {
-        try (RunningAgent agent = DeployedAgentLauncher.create("subscriptions", AGENT_DIST)
-                .controllerClass(SubscriptionsExtension.class)
+        try (RunningAgent agent = DeployedAgentLauncher.create("subscriptions_sample", AGENT_DIST)
+                .controllerClass(SubscriptionsSampleExtension.class)
                 .property("environment", "preview")
                 .property("region", "us-east-1")
                 .property("banner-text", "deployed-smoke")
@@ -45,7 +45,7 @@ class SubscriptionsExtensionDeployedTest {
             // 42 is just a non-sentinel positive long — the extension does not
             // require the id to be registered in a cloud push to answer the
             // path. The lifecycle block will show zero adds/updates/removes.
-            HttpResponse<String> res = agent.httpGet(SubscriptionsExtension::inspect, 42L);
+            HttpResponse<String> res = agent.httpGet(SubscriptionsSampleExtension::inspect, 42L);
 
             assertEquals(200, res.statusCode(), "body=" + res.body());
             assertTrue(res.body().contains("\"environment\":\"preview\""),
@@ -61,8 +61,8 @@ class SubscriptionsExtensionDeployedTest {
 
     @Test
     void connectsToWorkatoGateway() throws Exception {
-        try (RunningAgent agent = DeployedAgentLauncher.create("subscriptions", AGENT_DIST)
-                .controllerClass(SubscriptionsExtension.class)
+        try (RunningAgent agent = DeployedAgentLauncher.create("subscriptions_sample", AGENT_DIST)
+                .controllerClass(SubscriptionsSampleExtension.class)
                 .property("environment", "preview")
                 // No .openLocalAccess(...) → full gateway mode.
                 .start()) {

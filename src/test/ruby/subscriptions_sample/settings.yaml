@@ -1,4 +1,4 @@
-# Connection fields the SubscriptionsExtension connector reads via
+# Connection fields the SubscriptionsSampleExtension connector reads via
 # connection['...'] in execute: / test: lambdas.
 #
 # `_connection_id` would be set automatically by the Workato SDK framework for
