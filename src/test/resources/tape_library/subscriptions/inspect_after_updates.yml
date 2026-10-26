@@ -1,0 +1,22 @@
+---
+http_interactions:
+  - request:
+      method: get
+      uri: http://localhost/ext/subscriptions/42/inspect
+      body:
+        encoding: UTF-8
+        string: ''
+      headers: { }
+    response:
+      status:
+        code: 200
+        message: OK
+      headers:
+        Content-Type:
+          - application/json
+      body:
+        encoding: UTF-8
+        string: '{"adapter":"subscriptions","connectionId":42,"connectionIdFromPath":42,"connectionVersion":4,"staticPerAdapter":{"environment":"prod","region":"us-east-1","bannerText":"subscriptions-demo"},"connection":{"label-via-supplier":"primary","label-via-config":"primary","allKeys":["host","label","port"]},"lifecycle":{"addedTotal":1,"updatedTotal":3,"removedTotal":0,"trackedConnections":[42],"thisConnection":{"firstSeenAt":"2026-10-26T12:00:00Z","lastSeenAt":"2026-10-26T12:05:00Z","updateCount":3,"lastKnownKeys":["host","label","port"]}}}'
+      http_version: '1.1'
+    recorded_at: Mon, 26 Oct 2026 12:05:00 GMT
+recorded_with: VCR 6.3.1

@@ -1,0 +1,13 @@
+# Static per-adapter layer for SubscriptionsExtension — the harness treats
+# `extensions.subscriptions.*` as the equivalent of production's
+# `agent-config-support.subscriptions.*` (admin-pinned, same value for every
+# connection, resolved into raw-type @Value at bean init).
+#
+# Connection-specific values are supplied by the test via
+# `.connection(id, Map.of(...))` on the harness builder.
+extensions:
+  subscriptions:
+    controller: com.mycompany.onprem.subscriptions.SubscriptionsExtension
+    environment: test
+    region: eu-west-1
+    banner-text: subscriptions-demo

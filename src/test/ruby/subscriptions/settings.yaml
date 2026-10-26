@@ -1,0 +1,12 @@
+# Connection fields the SubscriptionsExtension connector reads via
+# connection['...'] in execute: / test: lambdas.
+#
+# `_connection_id` would be set automatically by the Workato SDK framework for
+# any connector with `secure_tunnel: true` (see PLAN.md Design decision #7). The
+# standalone SDK-tester does not do that yet (Open item #1), so the test
+# supplies the value by hand — it has to match the second path segment the
+# cassette files record.
+_connection_id: 42
+label: primary
+host: prod.example.com
+port: 2242
