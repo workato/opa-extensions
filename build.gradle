@@ -9,9 +9,15 @@ targetCompatibility = 21
 version = '0.2'
 
 project.ext {
-    springVersion = '6.0.9'
+    // Spring 7.0.x baseline — JDK 17+, Jakarta Servlet 6.1, Jackson 3.x
+    // (Jackson 2.x still works through a Spring compat layer but is deprecated;
+    // the agent's extension-test JAR already compiles against Jackson 3 under
+    // the `tools.jackson.*` package, so we match that here).
+    springVersion = '7.0.10'
     slf4jVersion = '2.0.6'
-    jacksonVersion = '2.15.1'
+    jacksonVersion = '3.2.4'
+    jakartaServletVersion = '6.1.0'
+    junitVersion = '6.0.3'
 }
 
 repositories {
@@ -120,10 +126,15 @@ dependencies {
     compileOnly "org.springframework:spring-context:${springVersion}"
     compileOnly "org.springframework:spring-webmvc:${springVersion}"
 
-    compileOnly "com.fasterxml.jackson.core:jackson-core:${jacksonVersion}"
-    compileOnly "com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}"
+    // Jackson 3 lives under `tools.jackson.*`, except for jackson-annotations
+    // which stays under the legacy `com.fasterxml.jackson.annotation` package
+    // (same artifact, bumped version). Spring 7 BOM aligns on 2.20.x for the
+    // annotations module, so TimerExtension's `@JsonProperty` still compiles.
+    compileOnly "tools.jackson.core:jackson-core:${jacksonVersion}"
+    compileOnly "tools.jackson.core:jackson-databind:${jacksonVersion}"
+    compileOnly "com.fasterxml.jackson.core:jackson-annotations:2.20.2"
 
-    compileOnly "jakarta.servlet:jakarta.servlet-api:6.0.0"
+    compileOnly "jakarta.servlet:jakarta.servlet-api:${jakartaServletVersion}"
     compileOnly "jakarta.inject:jakarta.inject-api:2.0.1"
 
     compileOnly "org.slf4j:slf4j-api:${slf4jVersion}"
@@ -141,12 +152,12 @@ dependencies {
     implementation "org.apache.commons:commons-lang3:3.12.0"         // NtlmExtension, TimerExtension — StringUtils
 
     testImplementation "org.springframework:spring-test:${springVersion}"
-    testImplementation "org.junit.jupiter:junit-jupiter:5.10.0"
-    testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.10.0"
+    testImplementation "org.junit.jupiter:junit-jupiter:${junitVersion}"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher:${junitVersion}"
     // AgentExtensionHarness parses the YAML fixtures under
     // src/test/resources/extensions/ via jackson-dataformat-yaml. Not referenced
     // by any extension production code, so it stays strictly on the test side.
-    testImplementation "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:${jacksonVersion}"
+    testImplementation "tools.jackson.dataformat:jackson-dataformat-yaml:${jacksonVersion}"
 }
 
 test {

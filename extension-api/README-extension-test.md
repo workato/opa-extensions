@@ -310,6 +310,276 @@ implementation returns: `put`/`remove`/`clear`/`putAll` throw
 configuration, the test fails here rather than silently drifting from
 production behaviour.
 
+### `getConnectionId()` in the fake
+
+By default `AgentExtensionContextV1.getConnectionId()` returns the sentinel
+`-1L` in the harness — matching production behaviour for a legacy extension
+(declared in local `extensions:` YAML) and for calls made outside an HTTP
+request thread.
+
+For a controller annotated with `@AgentConfigSupport`, which production
+routes under `/ext/{adapter}/{connection-id}/*`, the sentinel is rarely what
+the test wants. Two harness builder methods take over:
+
+```java
+// Static override — getConnectionId() always returns 42 inside this harness.
+@RegisterExtension
+AgentExtensionHarness agent = AgentExtensionHarness.extension("my-adapter")
+                .controller(MyCloudManagedController.class)
+                .connectionId(42L);
+```
+
+```java
+// Dynamic variant — supplier is invoked on every getConnectionId() call. Use
+// this when the id should vary across MockMvc requests.
+AtomicLong nextId = new AtomicLong(1000L);
+
+@RegisterExtension
+AgentExtensionHarness agent = AgentExtensionHarness.extension("my-adapter")
+        .controller(MyCloudManagedController.class)
+        .connectionIdSupplier(nextId::incrementAndGet);
+```
+
+Rules:
+
+- `connectionId(id)` requires `id > 0`. Non-positive values are reserved for
+  the "no connection in flight" sentinel; the method rejects them with
+  `IllegalArgumentException` so a confused `0` does not silently pass.
+- `connectionIdSupplier(...)` does not validate what the supplier returns —
+  a mix of positives and the `-1L` sentinel is a deliberate choice.
+- Only one of the two methods wins (last call); call either, not both.
+
+> First-class cloud-managed routing in the harness
+> (`AgentExtensionHarness.cloudManaged(...)` entrypoint, URL-based id
+> extraction mirroring production's path parsing) is tracked for a follow-up
+> iteration. The two builder methods above are the direct bridge for
+> cloud-managed extensions needing `getConnectionId()` today without that
+> entrypoint.
+
+### Per-connection configuration + static layer — `connection(id, props)` / `removeConnection(id)`
+
+A cloud-managed adapter in production serves many connections through one
+controller instance, and each `getProfileConfiguration()` call resolves to
+`agent-config-support.{adapter} ∪ custom.{adapter}.connections.{id}` with
+the static layer winning on key collision. In the harness the two sources
+collapse: `.property(...)` / `.yaml(...)` already play the role of the
+static layer; adding at least one `.connection(id, props)` engages
+cloud-managed mode and the merge view activates:
+
+```java
+
+@RegisterExtension
+AgentExtensionHarness agent = AgentExtensionHarness.extension("my-adapter")
+        .controller(MyCloudManagedController.class)
+        .property("proxy-url", "http://corp-proxy:3128")         // admin-pinned static
+        .connection(42L, Map.of("host", "prod.example.com", "port", 2242))
+        .connection(43L, Map.of("host", "staging.example.com", "port", 2243))
+        .connectionId(42L);
+```
+
+With `connectionId(42L)`:
+
+```java
+Map<String, Object> cfg = agent.agentExtensionApi().getContext().getProfileConfiguration();
+// cfg == {"host": "prod.example.com", "port": 2242, "proxy-url": "http://corp-proxy:3128"}
+// — the connection's own keys plus every .property / .yaml entry overlaid on top.
+```
+
+Switch the current id (statically through `.connectionId(...)` or
+dynamically through `.connectionIdSupplier(...)`) to view a different
+connection's section — the fake looks up the entry on every call.
+
+**Pin-semantics:** on key collision between `.property` / `.yaml` and the
+matched connection, the harness-wide value wins — matching the production
+rule where `agent-config-support.{adapter}` overrides anything in the
+cloud push. An admin-pinned `proxy-url` cannot be silently rewritten by a
+business-level cloud entry.
+
+**Live post-start.** Both `.connection(...)` and `.removeConnection(...)`
+work after the harness has started. A `.connection(44L, ...)` call inside
+a `@Test` is observable on the next `getProfileConfiguration()`
+invocation — the same way a production cloud push drops in a new
+connection config without tearing down the Spring context:
+
+```java
+
+@Test
+void simulatesACloudPush() {
+    agent.connection(44L, Map.of("host", "new-host"));
+    // ... issue a MockMvc request that resolves to connection 44 ...
+    agent.removeConnection(42L);
+    // ... subsequent requests to connection 42 fall back to the harness-wide view ...
+}
+```
+
+**Resolution and fallback.** When `getConnectionId()` returns a positive
+id that has a registered entry, `getProfileConfiguration()` returns that
+entry. For an unregistered id (or when `getConnectionId()` returns the
+sentinel `-1L`), the fake falls back to the harness-wide
+`.property(...)` / `.yaml(...)` map. The fallback is the legacy
+single-connection shape; cloud-managed tests typically pair known ids
+with registered connections and assert on the sentinel path separately.
+
+Rules:
+
+- `connection(id, props)` requires `id > 0` and non-null `props`;
+  idempotent on `id` (second call replaces).
+- `removeConnection(id)` is a no-op if the id is not registered.
+- Neither method implicitly sets the current connection id — pair with
+  `connectionId(...)` or `connectionIdSupplier(...)`.
+
+### Simulating request metadata — `.requestMetadata(...)`
+
+In production the agent reads `recipe_id` / `job_handle` / `project_id` /
+`line_number` from the signed `X-Workato-Diagnostic` JWT and exposes them
+through `AgentExtensionContextV1.getRequestMetadata()`. The harness skips
+the JWT path and lets the test hand the values in directly:
+
+```java
+@RegisterExtension
+AgentExtensionHarness agent = AgentExtensionHarness.extension("my-adapter")
+        .controller(MyController.class)
+        .requestMetadata(Map.of(
+                "recipe_id", "r-123",
+                "job_handle", "j-abc",
+                "project_id", "p-7",
+                "line_number", "42"));
+
+@Test
+void metadataIsVisibleInsideController() throws Exception {
+    agent.mockMvc()
+         .perform(get(agent.urlFor("/op")))
+         .andExpect(jsonPath("$.recipe_id").value("r-123"));
+}
+```
+
+Either builder overload works — `.requestMetadata(Map)` sets the whole
+map, `.requestMetadata(key, value)` adds / overwrites a single entry. Both
+are live after `start()`: later calls are observable on the next
+`getRequestMetadata()` invocation, so a test can advance the metadata
+between two MockMvc requests.
+
+### Simulating connection lifecycle — `.triggerConnectionAdded(...)` et al.
+
+A cloud-managed adapter can implement `AgentConnectionLifecycleV1` to
+react eagerly to a connection appearing, being updated, or being removed.
+The harness ships three builder methods that call the production path
+directly — the controller's callback fires, the version counter the fake
+reports via `getConnectionVersion()` advances, and the connection map
+updates in one call:
+
+```java
+
+@RegisterExtension
+AgentExtensionHarness agent = AgentExtensionHarness.extension("my-adapter")
+        .controller(MyController.class)
+        .connectionIdSupplier(currentConnId::get);
+
+@Test
+void poolManagementOnLifecycle() {
+    agent.triggerConnectionAdded(42L, Map.of("host", "prod.example.com"));
+    assertThat(myController.pools).containsKey(42L);
+
+    agent.triggerConnectionUpdated(42L, Map.of("host", "new.example.com"));
+    // onConnectionUpdated callback has fired; version counter == 2.
+
+    agent.triggerConnectionRemoved(42L);
+    assertThat(myController.pools).doesNotContainKey(42L);
+}
+```
+
+For controllers that do not implement `AgentConnectionLifecycleV1`, the
+`trigger*` methods still update the connection map and version counter —
+no callback fires, but the state is scriptable the same way.
+
+**Version counter**: starts at `1L` on the first `triggerAdded`; each
+subsequent `triggerUpdated` on the same id bumps by one. `triggerRemoved`
+drops the entry back to the `0L` sentinel. Values match production exactly
+(the fake does not try to be "smart" about equals-check on the merged
+map — the author drives the counter explicitly through these calls).
+
+The fake exposes the counter through
+`agent.agentExtensionApi().getContext().getConnectionVersion()`; set the
+current connection id via `.connectionId(...)` or
+`.connectionIdSupplier(...)` so the fake knows which entry to read.
+
+### Secret masking — `.secretKeys(...)`
+
+If the controller treats some keys as secret
+(`@AgentConfigSupport(secret=…)` in production, plus any
+`control_type: 'password'` fields the monolith forwards automatically),
+mirror that in the harness so the fake's `getProfileConfiguration()`
+matches production:
+
+```java
+
+@RegisterExtension
+AgentExtensionHarness agent = AgentExtensionHarness.extension("my-adapter")
+        .controller(MyController.class)
+        .connection(42L, Map.of(
+                "host", "prod.example.com",
+                "password", "s3cret",
+                "api-token", "tok-xyz"))
+        .connectionId(42L)
+        .secretKeys("password", "api-token");
+```
+
+Behaviour matches production exactly:
+
+| Call                              | Secret value           | Non-secret value        |
+|-----------------------------------|------------------------|-------------------------|
+| `cfg.get("password")`             | plaintext (`"s3cret"`) | plaintext               |
+| `cfg.containsKey("password")`     | `true`                 | `true`                  |
+| `cfg.toString()`                  | `password=***`         | `host=prod.example.com` |
+| `cfg.entrySet()` / `cfg.values()` | `***`                  | plaintext               |
+
+The pattern this closes: a controller that writes
+`log.debug("cfg: {}", cfg)` would otherwise drop the password into the log
+output on both production and in test. `.secretKeys(...)` lets a test for
+that logging path assert on the masked rendering rather than on the raw
+plaintext.
+
+> **Required-key validation is not modelled in the harness.** The HTTP 503
+> `invalid_config` response is produced by a servlet filter that sits above
+> the Spring MVC layer the harness exercises. Tests that pin the required-key
+> contract end-to-end live in `agent-launcher`'s integration suite; harness
+> tests exercise the controller's own code paths and are unaffected by
+> whether a `required` key is present.
+
+### `@Value Supplier<T>` fields on cloud-managed controllers
+
+The harness supports both `@Value` modes a cloud-managed controller uses
+in production:
+
+```java
+
+@RestController
+public class MyController {
+    @Value("${proxy-url:default-proxy}")
+    String proxyUrl;        // raw-type → static
+    @Value("${host}")
+    Supplier<String> host;  // supplier → per-request
+    @Value("${port:22}")
+    Supplier<Integer> port; // with default
+}
+```
+
+Resolution rules in the harness mirror production exactly:
+
+- **Raw-type** `@Value("${key}") T field;` — Spring injects once at bean
+  creation from the harness-wide `.property(...)` / `.yaml(...)` values
+  (same way production reads them from `agent-config-support.{adapter}`).
+- **`Supplier<T>`-wrapped** `@Value("${key}") Supplier<T> field;` —
+  intercepted by the harness's `ValueSupplierBeanPostProcessor` clone.
+  Each `.get()` reads `getContext().getProfileConfiguration().get(key)`,
+  applying the `${key:default}` default when the key is absent and
+  coercing the result to the element type (`String`, `Integer`, `Long`,
+  `Boolean`, `Double`).
+
+No builder opt-in — the two helpers are registered in every harness
+context and are passive for controllers that don't declare `Supplier<T>`
+fields.
+
 ## Testing webhook calls — `FakeAgentWebhookApiV1`
 
 If your extension calls `agent.getWebhookApi().send(...)` or `.wakeup(...)`, the harness ships a
@@ -323,6 +593,7 @@ If your extension calls `agent.getWebhookApi().send(...)` or `.wakeup(...)`, the
 > inline — IDE auto-import handles both.
 
 ```java
+
 @RegisterExtension
 static AgentExtensionHarness agent = AgentExtensionHarness.extension("my-profile")
         .controller(MyController.class);
@@ -336,8 +607,8 @@ void resetWebhookState() {
 @Test
 void controllerDeliversExpectedPayload() throws Exception {
     agent.webhookApi()
-        .whenSent("https://recipe/webhook")
-        .thenReturn(200, "{\"ack\":true}");
+            .whenSent("https://recipe/webhook")
+            .thenReturn(200, "{\"ack\":true}");
 
     agent.mockMvc().perform(agent.request(MyController::fire)
             .contentType(APPLICATION_JSON).content("{\"x\":1}"));
@@ -373,10 +644,10 @@ per-test override is the typical pattern.
 ### Observing captured calls
 
 ```java
-List<SentCall> all     = agent.webhookApi().allCalls();
-List<SentCall> toUrl   = agent.webhookApi().callsFor("https://recipe/webhook");
+List<SentCall> all = agent.webhookApi().allCalls();
+List<SentCall> toUrl = agent.webhookApi().callsFor("https://recipe/webhook");
 List<SentCall> wakeups = agent.webhookApi().callsOfKind(CallKind.WAKEUP);
-SentCall last          = agent.webhookApi().lastCall();   // throws if empty
+SentCall last = agent.webhookApi().lastCall();   // throws if empty
 ```
 
 `SentCall` records one HTTP attempt, so a `send` that retried 3 times produces 3 `SentCall`s
@@ -393,7 +664,9 @@ order are preserved exactly as production produces them.
 Tune the policy per-test by passing a `RetryPolicy` to the overload:
 
 ```java
-agent.webhookApi().setDefaultRetryPolicy(RetryPolicy.DEFAULTS.withAttempts(3));
+agent.webhookApi().
+
+setDefaultRetryPolicy(RetryPolicy.DEFAULTS.withAttempts(3));
 // or override per-call via send(url, body, policy)
 ```
 

@@ -117,13 +117,18 @@ public interface AgentExtensionContextV1 {
     String getProfileName();
 
     AgentConfiguration getProfileConfiguration();
+
+    default long getConnectionId() {
+        return -1L;
+    }
 }
 ```
 
-| Method                      | What you get                                                                                                                                                                       |
-|-----------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `getProfileName()`          | The YAML key your extension is declared under (`my-extension` in the example above). Stable for the lifetime of the agent.                                                         |
-| `getProfileConfiguration()` | Your extension's YAML section as a map, including the `controller` / `controllerClass` key alongside your custom properties. Snapshot — does not change across agent YAML reloads. |
+| Method                      | What you get                                                                                                                                                                                                                                                                                                           |
+|-----------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `getProfileName()`          | The YAML key your extension is declared under (`my-extension` in the example above). Stable for the lifetime of the agent. For cloud-managed adapters (see `@AgentConfigSupport`) this is the adapter name — the same value for every connection served by the same controller instance.                               |
+| `getProfileConfiguration()` | Your extension's YAML section as a map, including the `controller` / `controllerClass` key alongside your custom properties. Snapshot — does not change across agent YAML reloads.                                                                                                                                     |
+| `getConnectionId()`         | For cloud-managed adapters: the `SharedAccount#id` of the connection whose URL is currently being served, parsed from the `/ext/{adapter}/{connection-id}/...` path on each call. Request-scoped. Returns `-1L` in a legacy extension, outside an HTTP request thread, or when the path has no numeric second segment. |
 
 > **Each extension sees only its own profile.** There is no API for discovering
 > other extensions' configuration. (Note that this does not provide full
@@ -349,7 +354,294 @@ sections arrive as nested `Map` values; YAML lists arrive as `List` values.
 > `UnsupportedOperationException`, and the agent's internal state is unaffected.
 > Treat it as read-only.
 
+## Cloud-managed adapters: `@AgentConfigSupport`
+
+**Opt-in**: by default an extension declared in local `config.yml` under the
+`extensions:` key stays entirely local — the agent never contacts the
+monolith for its credentials. The alternative is to let the Workato cloud
+deliver credentials to every agent in the group via the existing managed-
+connections channel, same way the built-in database / sftp connectors
+receive theirs.
+
+Mark the controller class with `@AgentConfigSupport(name = "foo")` and the
+agent will route it under `/ext/foo/{connection-id}/...` where
+`connection-id` is the `SharedAccount#id` from the monolith (the same number
+that appears in the Workato UI URL `/connections/{id}`). One controller
+instance serves every connection of the adapter — connection-specific
+properties come through `getProfileConfiguration()` on each request:
+
+```java
+
+@AgentConfigSupport(name = "some-system")
+@RestController
+public class SomeSystemExtension {
+
+    @Autowired
+    AgentExtensionApiV1 agent;
+
+    @PostMapping("/{connId}/do-thing")
+    public Result doThing(@PathVariable("connId") long connId,
+                          @RequestBody Input in) {
+        var cfg = agent.getContext().getProfileConfiguration();
+        return call((String) cfg.get("host"),
+                (String) cfg.get("username"),
+                (String) cfg.get("password"),
+                in);
+    }
+}
+```
+
+| Rule                                                                           | Why it matters                                                                                                                                                                                      |
+|--------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| One `name=` per JAR; duplicates are rejected at startup                        | Prevents silent routing ambiguity between two JARs claiming the same adapter.                                                                                                                       |
+| Names starting with `workato.` (and the exact value `overrides`) are reserved  | Shared namespace for Workato-internal adapters. Enforced on both the monolith and the agent.                                                                                                        |
+| `@PathVariable` arguments require an explicit name (`@PathVariable("connId")`) | Agents may be compiled without `-parameters`; Spring cannot recover the parameter name reflectively.                                                                                                |
+| One controller instance is shared across all connections of the adapter        | Thread-safe your instance fields (`ConcurrentHashMap`, `AtomicLong`, …) or stay stateless — connection isolation is through `getProfileConfiguration()`, not through separate controller instances. |
+
+### Required-key validation — fail at push-time instead of in the handler
+
+Declare the keys every connection must carry on the annotation:
+
+```java
+
+@AgentConfigSupport(
+        name = "some-system",
+        required = {"host", "port", "username", "password"}
+)
+@RestController
+public class SomeSystemExtension {
+    // ...
+}
+```
+
+The agent checks every connection at cloud-reload time (static per-adapter config
+counts as a source — a key supplied there closes the requirement for all
+connections). A connection missing any required key is marked invalid; a request
+addressed to it short-circuits with HTTP 503:
+
+```json
+{
+  "error": "connection_unavailable",
+  "adapter": "some-system",
+  "connection_id": 42,
+  "reason": "invalid_config",
+  "missing_keys": [
+    "username"
+  ]
+}
+```
+
+The adapter stays enabled — sibling connections of the same adapter continue to
+answer normally. The check is {@code containsKey}, not non-null: {@code null} and
+the empty string are considered valid presences (the handler decides what to do
+with them). This moves a whole class of runtime bugs ("NPE in `.get()` under
+load") into push-time where you see them in `agent.log` and the UI before anyone
+hits the endpoint.
+
+Omit the `required` attribute (default is an empty array) to opt out — no
+validation runs, matching the pre-Stage-3 behaviour.
+
+### Secret masking — safe `log.debug("cfg: {}", cfg)`
+
+The common class of real-world secret leaks is an incidental
+`log.debug("full config: {}", cfg)` that drops the whole configuration
+map — password included — into the log stream. The agent closes that path
+automatically for two kinds of keys:
+
+- **Monolith-sourced**: fields the UI marks as `control_type: 'password'`.
+  The monolith forwards them in `custom.{adapter}._meta.secret_keys` on every
+  cloud push; the agent reads the list and masks the values accordingly.
+- **Author-declared**: for static per-adapter secrets the admin pins in
+  `agent-config-support.{adapter}` (which the monolith never sees), the
+  author lists them on the annotation:
+
+  ```java
+  @AgentConfigSupport(name = "some-system", secret = {"custom-token"})
+  ```
+
+The two sets are unioned at the agent — authors do not re-declare
+monolith-managed secrets, admins do not touch controller code to add their own.
+
+**Behaviour matrix**:
+
+| Call                              | Secret key value     | Non-secret key value    |
+|-----------------------------------|----------------------|-------------------------|
+| `cfg.get("password")`             | plaintext ("s3cret") | plaintext               |
+| `cfg.containsKey("password")`     | `true`               | `true`                  |
+| `cfg.toString()`                  | `password=***`       | `host=prod.example.com` |
+| `cfg.entrySet()` / `cfg.values()` | `***`                | plaintext               |
+
+> **Defensive, not a security boundary.** An author who writes
+> `log.info("pwd={}", cfg.get("password"))` still leaks the plaintext — the
+> explicit-get path honours authored intent on purpose. The mask only closes the
+> accidental-dump path, which is the common failure mode in practice.
+
+Omit the `secret` attribute (default is an empty array) to opt out — no
+masking runs, matching the pre-Stage-3 behaviour.
+
+### Reacting to connection lifecycle — `AgentConnectionLifecycleV1`
+
+An adapter that holds per-connection resources (connection pool, scheduled
+task, pre-fetched state) typically needs to react to a connection appearing,
+being updated, or disappearing. Implement
+{@code AgentConnectionLifecycleV1} on the controller class; the agent will
+invoke the callbacks from its cloud-reload thread whenever the cloud push
+mutates the adapter's connections:
+
+```java
+
+@AgentConfigSupport(name = "some-system")
+@RestController
+public class SomeSystemExtension implements AgentConnectionLifecycleV1 {
+
+    private final ConcurrentHashMap<Long, Pool> pools = new ConcurrentHashMap<>();
+
+    @Override
+    public void onConnectionAdded(long id, AgentConfiguration mergedConfig) {
+        pools.put(id, Pool.create(
+                (String) mergedConfig.get("host"),
+                (Integer) mergedConfig.get("port")));
+    }
+
+    @Override
+    public void onConnectionRemoved(long id) {
+        Pool p = pools.remove(id);
+        if (p != null) {
+            p.close();
+        }
+    }
+
+    // onConnectionUpdated default: delegates to onConnectionAdded — adequate
+    // when any change rebuilds the whole resource. Override for diff-aware
+    // optimisation.
+}
+```
+
+Thread model: callbacks run single-threaded on the cloud-reload thread,
+parallel with HTTP request-worker threads. Shared state between the two
+must be thread-safe — in the example above, `ConcurrentHashMap` is enough.
+The request-scoped methods on `AgentExtensionContextV1`
+(`getConnectionId()`, `getConnectionVersion()`, `getProfileConfiguration()`)
+return sentinel values inside a callback (no HTTP request is in flight);
+use the parameters passed to the callback instead.
+
+Exceptions thrown out of a callback are logged ERROR by the framework and
+the cloud reload continues. The framework does not retry.
+
+### Lazy variant — `getConnectionVersion()` on the hot path
+
+The complement of eager lifecycle callbacks: read
+`AgentExtensionContextV1.getConnectionVersion()` inside the request handler
+and rebuild the per-connection resource only when the counter has advanced
+since the last cached snapshot. Suits sparse adapters where many
+connections are never hit, so prewarming them wastes work.
+
+```java
+record Cached(long version, PooledHttpClient client) {
+}
+
+private final ConcurrentHashMap<Long, Cached> cache = new ConcurrentHashMap<>();
+
+@PostMapping("/{connId}/op")
+public Result op(@PathVariable long connId) {
+    long curVer = agent.getContext().getConnectionVersion();
+    Cached c = cache.compute(connId, (k, old) -> {
+        if (old != null && old.version == curVer)
+            return old;      // config unchanged
+        if (old != null)
+            old.client.close();                       // stale — close pool
+        return new Cached(curVer,
+                buildClient(agent.getContext().getProfileConfiguration()));
+    });
+    return call(c.client);
+}
+```
+
+Version semantics:
+
+| State                                                  | `getConnectionVersion()` |
+|--------------------------------------------------------|--------------------------|
+| First appearance of the connection                     | `1L`                     |
+| Subsequent push with identical values                  | unchanged                |
+| Push that actually changes a value                     | `prev + 1`               |
+| Connection removed and re-appeared later               | restarts at `1L`         |
+| Legacy extension / out-of-request / unknown connection | sentinel `0L`            |
+
+Eager (`AgentConnectionLifecycleV1`) and lazy (`getConnectionVersion()`) can
+coexist on the same adapter — pick the shape that fits each kind of
+resource.
+
+### Request metadata — `getRequestMetadata()`
+
+Every call the monolith routes through the agent carries a signed JWT in the
+`X-Workato-Diagnostic` header with claims about where the call came from —
+recipe id, job handle, project id, source line. The agent decodes it and
+exposes the values as a flat `Map<String, String>`:
+
+```java
+Map<String, String> meta = agent.getContext().getRequestMetadata();
+String recipeId = meta.get("recipe_id");           // or "flow_id"
+String jobHandle = meta.get("job_handle");         // or "flow_job_handle"
+String projectId = meta.get("project_id");
+String lineNumber = meta.get("line_number");
+```
+
+Use this when you need the fields *programmatically* — forwarding into an
+outbound HTTP call's headers, embedding into a response payload, correlating
+with another system. The exact set of keys matches what the monolith chose to
+put in the JWT; new keys appear here without a signature change. Returns an
+empty map outside an HTTP request thread (callbacks, scheduled tasks), when
+the request did not carry `X-Workato-Diagnostic`, or in a legacy extension.
+
+> **For logs you do not have to call this.** The same claims are already
+> pushed through SLF4J MDC by the agent's logging context filter — every
+> log line produced by your controller carries `recipe_id` / `job_handle` /
+> `project_id` / `line_number` automatically through the agent's Logback
+> pattern. Reach for `getRequestMetadata()` only when you need the values
+> programmatically.
+
+### Automatic observability metrics
+
+Every HTTP request routed to a cloud-managed adapter emits two Micrometer
+series — no code changes required:
+
+- `agent_extension_requests_total{adapter, connection_id, outcome, http_status}`
+  — counter, incremented once per request. The `outcome` tag is one of
+  `success` (2xx), `client_error` (4xx), `server_error` (5xx), plus the
+  `unknown` bucket for 1xx/3xx edge cases.
+- `agent_extension_request_duration_seconds{adapter, connection_id}` — timer,
+  sampled per request from dispatcher entry to response flush.
+
+A third series counts validation outcomes at push time:
+`agent_extension_invalid_config_total{adapter}` — increments by the number
+of invalid connections every cloud push with at least one connection missing
+required keys. See the "Required-key validation" section above.
+
+The tag cardinality is bounded by the real connection fan-out of the
+adapter (usually tens, occasionally hundreds), which is safe for a
+Prometheus-shaped backend. Legacy `extensions:` endpoints are not
+instrumented — these metric families are shaped around the cloud-managed
+adapter / connection tags and would carry no useful signal without them.
+
+### Admin override — connecting a legacy JAR without annotating it
+
+Admins can promote a legacy JAR into the cloud-managed pipeline without
+rebuilding it, by listing it in the agent's local `config.yml`:
+
+```yaml
+agent-config-support:
+  overrides:
+    some-system: com.example.onprem.SomeSystemExtension
+```
+
+This is immutable from the cloud's point of view (no push can change it)
+and intended as the escape hatch for JARs whose author cannot ship
+`@AgentConfigSupport` today. The annotation remains the preferred path for
+anything you build fresh.
+
 ## Property injection with `@Value`
+
+### Legacy extensions
 
 Any key under your extension's YAML section is injectable via Spring's
 `@Value("${key}")`:
@@ -374,6 +666,57 @@ private int timeoutMs;
 Dots in YAML keys are treated as literal characters, not nesting separators —
 the lookup is a direct map `get()`. If you have a nested YAML section and want
 to inject individual leaves, flatten the keys or inject the parent `Map`.
+
+### Cloud-managed adapters — two `@Value` modes
+
+A cloud-managed adapter (annotated with `@AgentConfigSupport`) serves many
+connections through **one shared controller instance**, so a plain
+`@Value("${host}") String host;` on a connection-level key would be wrong:
+it resolves once at bean init and never changes between connections. The
+agent therefore supports two `@Value` modes side-by-side, chosen by field
+type:
+
+| Field type             | Resolution                                                                                             | Use for                                                                                               |
+|------------------------|--------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------|
+| Raw-type (`String`, …) | Resolved **once** at bean creation from `agent-config-support.{adapter}` (admin-pinned static config). | `proxy-url`, `tls-ca-path`, `connect-timeout-ms` — admin infra that is the same for every connection. |
+| `Supplier<T>`          | Resolved **per request** against the current connection's merged configuration.                        | `host`, `port`, `username`, `password` — anything in `connection.fields`.                             |
+
+Example:
+
+```java
+
+@AgentConfigSupport(name = "some-system")
+@RestController
+public class SomeSystemExtension {
+
+    @Value("${proxy-url:}")
+    String proxyUrl;        // static — same for every connection
+    @Value("${host}")
+    Supplier<String> host; // connection-dynamic — call .get() in handler
+    @Value("${port:22}")
+    Supplier<Integer> port;
+    @Value("${password}")
+    Supplier<String> pass;
+
+    @PostMapping("/{connId}/op")
+    public Result op(@PathVariable("connId") long connId, @RequestBody Input in) {
+        return call(host.get(), port.get(), pass.get(), proxyUrl, in);
+    }
+}
+```
+
+Supported `Supplier<T>` element types: `String`, `Integer`, `Long`,
+`Boolean`, `Double`. `${key:default}` syntax applies the default when the
+key is absent in the merged config. Resolution is lazy — `.get()` reads
+the current connection's config at the moment the handler calls it, so a
+cloud push that changes the connection's values is picked up on the next
+request without re-starting the agent.
+
+**Collision rule:** when a key is present in both the static section and
+the cloud push, the static value wins (admin pin-semantics — a cloud push
+cannot silently override admin-locked infra). Covers both `@Value` modes:
+raw-type gets the static value directly; `Supplier<T>.get()` sees the
+static value through the merged view.
 
 ## Migrating from the legacy API
 

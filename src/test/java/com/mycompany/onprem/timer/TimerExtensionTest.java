@@ -1,6 +1,7 @@
 package com.mycompany.onprem.timer;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.mycompany.onprem.timer.TimerExtension.ErrorResponse;
 import com.mycompany.onprem.timer.TimerExtension.FireNowResponse;
 import com.mycompany.onprem.timer.TimerExtension.SubscribeResponse;
@@ -26,7 +27,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 
 class TimerExtensionTest {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final ObjectMapper MAPPER = JsonMapper.builder().build();
 
     @RegisterExtension
     static AgentExtensionHarness agent = AgentExtensionHarness.extension("timer")
