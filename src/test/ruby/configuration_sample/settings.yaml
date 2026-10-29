@@ -1,4 +1,4 @@
-# Connection fields the SubscriptionsSampleExtension connector reads via
+# Connection fields the ConfigurationSampleExtension connector reads via
 # connection['...'] in execute: / test: lambdas.
 #
 # `_connection_id` would be set automatically by the Workato SDK framework for
@@ -7,6 +7,4 @@
 # supplies the value by hand — it has to match the second path segment the
 # cassette files record.
 _connection_id: 42
-label: primary
-host: prod.example.com
-port: 2242
+timeout: 5000

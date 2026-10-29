@@ -264,18 +264,18 @@ task timerRspec(type: Exec) {
     commandLine rspecCommand(project.findProperty('spec'))
 }
 
-task subscriptionsSampleRspec(type: Exec) {
+task configurationSampleRspec(type: Exec) {
     group = 'verification'
-    description = rspecDescription('subscriptions_sample')
+    description = rspecDescription('configuration_sample')
     dependsOn rubyBundleInstall
-    workingDir file('src/test/ruby/subscriptions_sample')
+    workingDir file('src/test/ruby/configuration_sample')
     commandLine rspecCommand(project.findProperty('spec'))
 }
 
 task testRubyConnectors {
     group = 'verification'
     description = 'Runs RSpec for every Ruby custom connector using VCR cassettes.'
-    dependsOn securityRspec, ntlmRspec, timerRspec, subscriptionsSampleRspec
+    dependsOn securityRspec, ntlmRspec, timerRspec, configurationSampleRspec
 }
 
 // Hook into both `test` and `check` so `./gradlew test` also runs the Ruby suite.
