@@ -112,15 +112,15 @@ helpers in step 5 (`Ref1..Ref10` do not declare `throws`).
 
 Add `<Name>Test` under `src/test/java/com/mycompany/onprem/<name>/`. The
 harness wires your controller into a hermetic Spring `MockMvc` context — no
-Jetty, no classloader isolation, no network. It takes milliseconds and runs
-on every `./gradlew test`.
+real HTTP server, no network, nothing that mimics the agent's own
+packaging. It takes milliseconds and runs on every `./gradlew test`.
 
-Covers: `@Autowired AgentExtensionApiV1`, `@Value("${…}")` injection with the
-agent's dot-literal semantics, `/ext/{profile}/*` routing, `@PathVariable` /
-`@RequestBody`, your `@ControllerAdvice` beans. Does *not* cover: Jetty
-specifics, classloader isolation from `lib_ext/`, mTLS tunnel. Full DSL +
-troubleshooting table: see **Java extension tests** below and
-`extension-api/README-extension-test.md`.
+Covers: `@Autowired AgentExtensionApiV1`, `@Value("${…}")` injection with
+dot-literal semantics, `/ext/{profile}/*` routing, `@PathVariable` /
+`@RequestBody`, your `@ControllerAdvice` beans. Does *not* cover: the
+agent's own packaging, mTLS tunnel, anything that only shows up when the
+code runs inside a deployed agent. Full DSL + troubleshooting table: see
+**Java extension tests** below and `extension-api/README-extension-test.md`.
 
 ### Step 3 — Write the Ruby connector
 
@@ -151,20 +151,19 @@ cassettes, re-recording against a live agent, cleanup before commit): see
 
 Add `<Name>DeployedTest` under `src/test/java/com/mycompany/onprem/<name>/`.
 This is the first step that touches an actual agent on disk. The launcher
-loads the dist's own `agent-core` + `extension-api` via an isolated
-`URLClassLoader`, drops your extension class into it, writes a merged
-`config.yml`, and runs the agent in-process in the test JVM. Keep these
-tests `@Disabled` — they depend on per-machine state (deployed agent path,
-activated certs) and are run manually from the IDE.
+starts a real agent process in your test JVM with your extension class
+loaded into it and your `config.yml` applied. Keep these tests `@Disabled`
+— they depend on per-machine state (deployed agent path, activated certs)
+and are run manually from the IDE.
 
 Two complementary modes, both are present in `*DeployedTest`:
 
 - **`openLocalAccess()` + direct HTTP** — opens a local port on the agent
   and calls the controller via `agent.httpPost(Controller::method, body)` /
   `agent.requestFor(Controller::method).header(…).build()` + `agent.send(req)`.
-  Verifies the full in-agent path (classloader isolation, Jetty binding,
-  Spring dispatch) without needing the Workato cloud. In this mode the agent
-  does **not** connect to the gateway (by design — see the mode table in
+  Verifies the full HTTP serving path inside a real agent without needing
+  the Workato cloud. In this mode the agent does **not** connect to the
+  gateway (by design — see the mode table in
   `extension-api/README-extension-test.md`).
 - **No `openLocalAccess()` + `awaitGatewayConnected(Duration)`** — the agent
   stays in full gateway mode and the test blocks until the
@@ -200,15 +199,15 @@ long-lived harness for debugging real recipe runs:
 5. **Trigger the recipe.** The request leaves the Workato cloud → traverses
    the mTLS tunnel → arrives at the in-JVM agent → hits
    `/ext/<profile>/<endpoint>` → fires your breakpoint. From that frame the
-   IDE's call stack walks the full chain: `jetty → ExtensionDispatcher →
-   DispatcherServlet → <your controller>`. Step through, mutate variables,
-   evaluate expressions — the rest of the agent keeps serving the gateway
-   on other threads.
+   IDE's call stack walks the full chain from the agent's HTTP front-end
+   down to your controller. Step through, mutate variables, evaluate
+   expressions — the rest of the agent keeps serving the gateway on other
+   threads.
 
-This loop is the fastest way to reproduce production-only bugs
-(classloader clashes with `lib_ext/`, Jetty buffering, header handling in
-the tunnel) without any build/deploy churn — rebuild only your extension
-class, re-run the test, iterate.
+This loop is the fastest way to reproduce production-only bugs — library
+version clashes with what the agent already ships, HTTP buffering, header
+handling in the tunnel — without any build/deploy churn: rebuild only your
+extension class, re-run the test, iterate.
 
 ## Project setup: Extension API and test-harness JARs
 
@@ -321,10 +320,11 @@ libraries that extension code actually imports (today: `commons-codec` for
 `Hex`, `commons-lang3` for `StringUtils`), plus our own classes under
 `com/mycompany/onprem/`. Everything else the agent provides at runtime —
 `extension-api`, Spring, Jackson, Jakarta, SLF4J, Apache HttpClient — is
-declared `compileOnly` in `build.gradle` and is **not** shaded. Packaging
-what the agent already loads would cause classloader conflicts (see
-`extension-api/README-extension-api.md` → "Add the API as a provided-scope
-dependency") and bloat the deliverable; today the jar weighs under 1 MB.
+declared `compileOnly` in `build.gradle` and is **not** shaded. Shipping
+your own copy of what the agent already provides risks version clashes at
+load time (see `extension-api/README-extension-api.md` → "Add the API as a
+provided-scope dependency") and bloats the deliverable; today the jar
+weighs under 1 MB.
 
 When you add a new third-party dependency, decide its scope with one
 question: *does the agent itself provide this at runtime?*
@@ -375,8 +375,8 @@ Useful standalone Gradle tasks:
 Unit tests for the on-prem extensions live under
 `src/test/java/com/mycompany/onprem/`. They run against the **mock Extension
 API** shipped as `extension-test-<version>.jar` — no running agent, no
-classloader isolation, no Jetty. The authoritative reference for the mock
-harness itself is
+real HTTP server, nothing that mimics the agent's own packaging. The
+authoritative reference for the mock harness itself is
 [`extension-api/README-extension-test.md`](extension-api/README-extension-test.md)
 (generated on every build). The section below is a quick practical overview;
 anything that contradicts the generated reference, trust the reference.
