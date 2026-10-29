@@ -15,16 +15,13 @@ contract.
 > looks on the agent side, not as a template to copy into production.
 >
 > Subscription state lives in a single `ConcurrentHashMap` inside **one**
-> agent process. OPA agents commonly run as a group (several instances behind
-> a load balancer). Workato routes the `webhook_subscribe` call to one
-> arbitrary member of the group — only that one agent knows the subscription
-> exists. If a scheduled tick, an inbound event, or the matching
-> `webhook_unsubscribe` later lands on a different member, it is dropped on
-> the floor. That directly contradicts the whole point of running agents as
-> a group (fault-tolerance + horizontal scale), so this pattern is not
-> acceptable for production without a shared registry (database, Redis, …)
-> or a group-aware subscribe fan-out — both out of scope for this API and
-> currently unaddressed by the SDK. See
+> agent process — a direct violation of the "stateless by default across
+> the agent group" rule in the top-level README. The scheduled tick, the
+> inbound event, and the matching `webhook_unsubscribe` can each land on a
+> different group member, which only knows about its own subscriptions and
+> drops the request on the floor. Production usage needs a shared registry
+> (database, Redis, …) or a group-aware subscribe fan-out — both out of
+> scope for this API and currently unaddressed by the SDK. See
 > `extension-api/README-extension-api.md` → "subscribe/unsubscribe pattern"
 > for the authoritative statement of this limitation.
 >
