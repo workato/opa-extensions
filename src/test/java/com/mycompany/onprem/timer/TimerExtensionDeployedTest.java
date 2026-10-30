@@ -1,6 +1,7 @@
 package com.mycompany.onprem.timer;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.mycompany.onprem.timer.TimerExtension.FireNowRequest;
 import com.mycompany.onprem.timer.TimerExtension.FireNowResponse;
 import com.mycompany.onprem.timer.TimerExtension.SubscribeRequest;
@@ -33,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class TimerExtensionDeployedTest {
 
     private static final Path AGENT_DIST = Paths.get("/Users/krocodl/Apps/OPA-Preview-US-34");
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final ObjectMapper MAPPER = JsonMapper.builder().build();
 
     @Test
     void firesEventToLocalSinkOverLocalHttp() throws Exception {

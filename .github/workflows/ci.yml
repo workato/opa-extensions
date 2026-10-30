@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build (JDK 21 + Ruby 3.2.8)
+    name: Build (JDK 21 + Ruby 3.4.5)
     runs-on: ubuntu-latest
 
     steps:
@@ -27,7 +27,7 @@ jobs:
       - name: Set up Ruby
         uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1.329.0
         with:
-          ruby-version: '3.2.8'
+          ruby-version: '3.4.5'
           bundler-cache: false
 
       - name: Cache Gradle

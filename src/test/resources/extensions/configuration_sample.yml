@@ -1,0 +1,11 @@
+# Static per-adapter layer for ConfigurationSampleExtension — the harness treats
+# `extensions.configuration_sample.*` as the equivalent of production's
+# `agent-config-support.configuration_sample.*` (admin-pinned, same value for
+# every connection, resolved into raw-type @Value at bean init).
+#
+# Connection-specific values (timeout) are supplied by the test via
+# `.connection(id, Map.of(...))` on the harness builder.
+extensions:
+  configuration_sample:
+    controller: com.mycompany.onprem.configuration_sample.ConfigurationSampleExtension
+    environment: test

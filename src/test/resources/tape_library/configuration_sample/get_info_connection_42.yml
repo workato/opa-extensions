@@ -1,0 +1,22 @@
+---
+http_interactions:
+  - request:
+      method: get
+      uri: http://localhost/ext/configuration_sample/42/info
+      body:
+        encoding: UTF-8
+        string: ''
+      headers: { }
+    response:
+      status:
+        code: 200
+        message: OK
+      headers:
+        Content-Type:
+          - application/json
+      body:
+        encoding: UTF-8
+        string: '{"environment":"prod","timeout":5000,"updatedAtByMyself":"2026-10-30T12:05:00Z","updatedAtByApi":"2026-10-30T12:00:00Z"}'
+      http_version: '1.1'
+    recorded_at: Fri, 30 Oct 2026 12:00:00 GMT
+recorded_with: VCR 6.3.1

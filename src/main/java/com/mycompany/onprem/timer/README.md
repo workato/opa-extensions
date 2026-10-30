@@ -15,16 +15,13 @@ contract.
 > looks on the agent side, not as a template to copy into production.
 >
 > Subscription state lives in a single `ConcurrentHashMap` inside **one**
-> agent process. OPA agents commonly run as a group (several instances behind
-> a load balancer). Workato routes the `webhook_subscribe` call to one
-> arbitrary member of the group — only that one agent knows the subscription
-> exists. If a scheduled tick, an inbound event, or the matching
-> `webhook_unsubscribe` later lands on a different member, it is dropped on
-> the floor. That directly contradicts the whole point of running agents as
-> a group (fault-tolerance + horizontal scale), so this pattern is not
-> acceptable for production without a shared registry (database, Redis, …)
-> or a group-aware subscribe fan-out — both out of scope for this API and
-> currently unaddressed by the SDK. See
+> agent process — a direct violation of the "stateless by default across
+> the agent group" rule in the top-level README. The scheduled tick, the
+> inbound event, and the matching `webhook_unsubscribe` can each land on a
+> different group member, which only knows about its own subscriptions and
+> drops the request on the floor. Production usage needs a shared registry
+> (database, Redis, …) or a group-aware subscribe fan-out — both out of
+> scope for this API and currently unaddressed by the SDK. See
 > `extension-api/README-extension-api.md` → "subscribe/unsubscribe pattern"
 > for the authoritative statement of this limitation.
 >
@@ -46,7 +43,7 @@ contract.
 | Jackson records with `@JsonProperty("snake_case")`  | All JSON boundaries — inbound request bodies, outbound response bodies, and the outbound webhook payload (`TimerEvent`) — go through typed records. Component names compile to camelCase so the annotations are mandatory.                                                                                   |
 | `webhook_subscribe` / `/unsubscribe` HTTP contract  | The three endpoints under `/webhook/*` implement the SDK contract documented in `README-extension-api.md` verbatim. Subscription identity is an extension-generated UUID — the recommended path per that document.                                                                                           |
 | `@Value("${min-period-seconds:5}")`                 | Soft floor on the period, overridable from YAML — tests set it to `1` so the scheduler can tick inside a bounded wait.                                                                                                                                                                                       |
-| `DisposableBean.destroy()` lifecycle                | Cancels in-flight `ScheduledFuture`s, shuts the executor down, and `awaitTermination`s. Fires when the extension's Spring context closes (profile unload or `AgentExtensionHarness.stop()` in tests).                                                                                                        |
+| `DisposableBean.destroy()` lifecycle                | Cancels in-flight `ScheduledFuture`s, shuts the executor down, and `awaitTermination`s. Fires when the extension is unloaded by the agent (profile removed) or when `AgentExtensionHarness.stop()` is called in tests.                                                                                       |
 | Lazy init of a shared `ScheduledExecutorService`    | Double-check-locked, daemon-threaded, named `timer-ext-<n>`. Same pattern as **NtlmExtension**'s HttpClient.                                                                                                                                                                                                 |
 | `scheduleWithFixedDelay` over `scheduleAtFixedRate` | `AgentWebhookApiV1.send` is **synchronous and blocks for the whole retry chain** (seconds, not millis). Fixed-rate would queue up back-to-back ticks on the single-threaded executor during a slow one; fixed-delay keeps a full `period_seconds` gap between the end of one tick and the start of the next. |
 | Swallow + log in the scheduler thread               | A `WebhookDeliveryException` on a scheduled tick is caught, logged `WARN`, and the thread stays alive to run the next tick. Contrast with `/fire_now` which propagates the exception to the HTTP response — manual triggers want visible failures.                                                           |

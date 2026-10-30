@@ -15,7 +15,7 @@ answers one `POST`. Everything else in the project is built on this skeleton.
 | Autowiring `AgentExtensionApiV1`                        | `@Inject AgentExtensionApiV1 agent;` — jakarta.inject form, equivalent to Spring `@Autowired`.                                                                                                                           |
 | `AgentExtensionContextV1.getProfileName()`              | Used as a prefix in every log line so multi-profile agents are debuggable.                                                                                                                                               |
 | `AgentExtensionContextV1.getProfileConfiguration()`     | Reads the `signing-secret` key out of the profile's YAML map at request time.                                                                                                                                            |
-| YAML → config read via the context (not `@Value`)       | A deliberate choice — shows the `Map<String, Object>` view, including the subtle gotcha that `secret` as a key name is reserved by the agent's `SecretsPreprocessor` and must be avoided (see the comment in the class). |
+| YAML → config read via the context (not `@Value`)       | A deliberate choice — shows the `Map<String, Object>` view, including the subtle gotcha that `secret` as a key name is reserved by the agent and must be avoided (see the comment in the class).                         |
 | `@RestController` + `@PostMapping` + `@RequestBody Map` | Vanilla Spring MVC — no custom body deserialisation.                                                                                                                                                                     |
 | Failing fast on missing config                          | `IllegalStateException` carrying the profile name — surfaces to the caller as HTTP 500 but with a message a human can act on.                                                                                            |
 
@@ -54,9 +54,9 @@ extensions:
 ```
 
 - `signing-secret` (required, non-empty) — prepended to the payload before
-  hashing. **Do not** rename this key to just `secret` — the agent's
-  `SecretsPreprocessor` interprets any map containing `secret:` as a
-  secret-provider spec and will fail to load the profile in local-HTTP mode.
+  hashing. **Do not** rename this key to just `secret` — the agent reserves
+  `secret:` as a provider-config marker and will fail to load the profile
+  in local-HTTP mode.
 
 ## Workato connector
 

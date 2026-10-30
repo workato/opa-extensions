@@ -8,53 +8,244 @@ custom connector. Per-extension documentation (what it does, what Extension
 API features it demonstrates, HTTP endpoints, YAML keys it reads) lives next
 to its Java class — follow the links.
 
-| Extension                                                             | What it demonstrates                                                                                                                                                                                                                        | HTTP surface                                                            |
-|-----------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
-| **[security](src/main/java/com/mycompany/onprem/security/README.md)** | The minimum-viable extension — `@Inject AgentExtensionApiV1`, YAML read via `getProfileConfiguration()`, one `@PostMapping` endpoint.                                                                                                       | `POST /computeDigest`                                                   |
-| **[ntlm](src/main/java/com/mycompany/onprem/ntlm/README.md)**         | `@Value("${…}")` property injection with defaults, lazy-init of a shared `HttpClient` (DCL pattern), `@RequestHeader`-driven inputs, forwarding upstream status via `HttpServletResponse`.                                                  | `POST /request`                                                         |
-| **[timer](src/main/java/com/mycompany/onprem/timer/README.md)**       | **`AgentWebhookApiV1.send(...)`** with per-profile retry policy, `webhook_subscribe` / `_unsubscribe` HTTP contract, Jackson records with `@JsonProperty`, background `ScheduledExecutorService` with `DisposableBean.destroy()` lifecycle. | `GET /webhook/health`, `POST /webhook/{subscribe,unsubscribe,fire_now}` |
+| Extension                                                                                     | What it demonstrates                                                                                                                                                                                                                                                                  | HTTP surface                                                            |
+|-----------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
+| **[security](src/main/java/com/mycompany/onprem/security/README.md)**                         | The minimum-viable extension — `@Inject AgentExtensionApiV1`, YAML read via `getProfileConfiguration()`, one `@PostMapping` endpoint.                                                                                                                                                 | `POST /computeDigest`                                                   |
+| **[ntlm](src/main/java/com/mycompany/onprem/ntlm/README.md)**                                 | `@Value("${…}")` property injection with defaults, lazy-init of a shared `HttpClient` (DCL pattern), `@RequestHeader`-driven inputs, forwarding upstream status via `HttpServletResponse`.                                                                                            | `POST /request`                                                         |
+| **[timer](src/main/java/com/mycompany/onprem/timer/README.md)**                               | **`AgentWebhookApiV1.send(...)`** with per-profile retry policy, `webhook_subscribe` / `_unsubscribe` HTTP contract, Jackson records with `@JsonProperty`, background `ScheduledExecutorService` with `DisposableBean.destroy()` lifecycle.                                           | `GET /webhook/health`, `POST /webhook/{subscribe,unsubscribe,fire_now}` |
+| **[configuration_sample](src/main/java/com/mycompany/onprem/configuration_sample/README.md)** | **Cloud-managed model** (`@AgentConfigSupport`), **`AgentConnectionLifecycleV1`** callbacks (`onConnectionAdded/Updated/Removed`), raw-type `@Value` for static per-adapter vs `@Value Supplier<T>` for connection-dynamic resolution, singleton controller serving many connections. | `GET /{connectionId}/test`, `GET /{connectionId}/info`                  |
 
-Add a new extension by cloning any of the three subdirectories under
+Add a new extension by cloning any of the subdirectories under
 `src/main/java/com/mycompany/onprem/` and following the six-step **Development
 workflow** below.
 
+## Two extension models
+
+An OPA extension comes in one of two flavours. Pick before you start — the
+differences cascade into every file you will write.
+
+|                                     | **Per-profile** (static)                                                  | **Cloud-managed** (dynamic)                                                                  |
+|-------------------------------------|---------------------------------------------------------------------------|----------------------------------------------------------------------------------------------|
+| Demonstrated by                     | `security`, `ntlm`, `timer`                                               | `configuration_sample`                                                                       |
+| How the agent learns about it       | Admin edits `extensions:` in `conf/config.yml` by hand on every agent     | Workato pushes `custom.{adapter}.connections.{id}` to the agent; admins never touch it       |
+| YAML namespace (admin writes)       | `extensions.{profile}`                                                    | `agent-config-support.{adapter}` (static per-adapter; optional)                              |
+| YAML namespace (cloud-delivered)    | — (nothing)                                                               | `custom.{adapter}.connections.{id}`                                                          |
+| URL layout                          | `/ext/{profile}/<path>`                                                   | `/ext/{adapter}/{connectionId}/<path>`                                                       |
+| How the controller is located       | `controller:` property gives the FQCN                                     | `@AgentConfigSupport(name = "…")` annotation on the class                                    |
+| Controller instances                | One instance per profile; each profile is a separate controller + context | One instance per adapter; the same controller serves every connection of the adapter         |
+| Connection fields in `connector.rb` | `profile` field is **required** and must match the YAML key               | `profile` field is **forbidden**; routing goes through `_connection_id` set by the framework |
+| Hot-reload                          | No — editing `config.yml` requires an agent restart                       | Yes — the framework delivers connection diffs through `AgentConnectionLifecycleV1` callbacks |
+
+If you need multi-tenancy, connection-field edits from the Workato UI, or
+dynamic registration without touching every agent — use **cloud-managed**.
+If you have a single long-lived per-agent setup (one SMB share, one NTLM
+realm, one scheduled task) — **per-profile** is simpler.
+
 ## Configuration
 
-Extension mechanism is  enabled by adding the `extensions` section to the config file, `conf/config.yml`:
+The extension mechanism is enabled by adding the `extensions:` and/or
+`agent-config-support:` section to the agent config file, `conf/config.yml`.
+
+**Per-profile extensions** — admin writes everything, one block per profile:
 
 ```yml
-    server:
-      classpath: C:\\Program Files\\Workato Agent\\ext
-    extensions:
-      security:
-        controllerClass: com.mycompany.onprem.security.SecurityExtension
-        secret: HA63A3043AMMMM
+server:
+  classpath: /opt/workato/agent/lib_ext
+
+extensions:
+  security:
+    controller: com.mycompany.onprem.security.SecurityExtension
+    signing-secret: HA63A3043AMMMM
 ```
 
-Individual endpoints are defined inside `extensions`, where every key serves as _endpoint name_. Every _endpoint name_
-has to be valid identifier, has to be URL-friendly and cannot contain any special characters (like whitespace, etc.).
+Every key under `extensions:` names one profile; each profile is URL-friendly
+(valid identifier, no whitespace or special characters). `controller:` is the
+fully-qualified name of the Spring `@RestController` class. Every sibling key
+is a configuration value the controller reads at request time.
 
-Classpath defines a set of folders/JAR files containing compiled extensions.
+**Cloud-managed extensions** — admin pins static per-adapter values only;
+Workato delivers everything per-connection:
+
+```yml
+server:
+  classpath: /opt/workato/agent/lib_ext
+
+agent-config-support:
+  configuration_sample:
+    environment: prod            # static, same for every connection of this adapter
+```
+
+No `controller:` key — the agent finds the class via its
+`@AgentConfigSupport(name = "configuration_sample")` annotation at startup.
+No connection-level block in `config.yml` either — those arrive from the
+Workato cloud and the framework reloads them without a restart.
+
+`server.classpath` is a comma- or newline-separated list of directories /
+JAR files containing compiled extensions. Point it at the directory you drop
+the extension JAR into (**`lib_ext/`** by convention — see **Installing the
+extension to OPA**).
 
 ## Using extension endpoints
 
-Every endpoint is hosted inside the REST-compliant URL: `/ext/<endpointName>/<resource>` where `<endpointName>`
-corresponds to key defined in the configuration file and `<resource>` is an specific REST resource within the endpoint.
+The URL layout depends on the model (see **Two extension models** above):
 
-Endpoint request handling logic is defined by Spring REST controller class, provided as `controllerClass` property. This
-controller class is registered inside an endpoint-specific Spring `WebApplicationContext` and allows retrieving
-configuration properties from the `config.yml` file.
+- **Per-profile**: `/ext/{profile}/<path>` — `{profile}` is the key under
+  `extensions:` in `config.yml`; `<path>` is the Spring `@RequestMapping`.
+- **Cloud-managed**: `/ext/{adapter}/{connectionId}/<path>` — `{adapter}`
+  is the `@AgentConfigSupport(name = …)` value; `{connectionId}` is the
+  numeric id Workato assigns to the connection; `<path>` is the Spring
+  `@RequestMapping`.
 
-## Endpoint controller shape
-
-Every extension is a Spring `@RestController` the agent mounts at
-`/ext/{profile}/...`. The authoritative API surface — allowed packages,
-injection points, lifecycle, and a worked example — is in
+The authoritative API surface — allowed packages, injection points,
+lifecycle, worked examples — is in
 [`extension-api/README-extension-api.md`](extension-api/README-extension-api.md),
-which the build regenerates from the Extension API JAR on every compile.
+regenerated from the Extension API JAR on every compile.
 
 For concrete examples of each pattern in use, open the per-extension READMEs
 linked in the **Available extensions** table above.
+
+## Writing the Java extension — common rules
+
+These rules apply to every OPA extension regardless of model. Features
+specific to one model are tagged **[cloud-managed]**.
+
+### Return 4xx with a parseable JSON body
+
+The companion `connector.rb` relies on an `after_error_response` hook to
+pull a human message out of your 4xx body — so give it one. A consistent
+shape across every error endpoint also makes action-level `execute:` errors
+usable in recipes:
+
+```java
+return ResponseEntity.badRequest().
+
+body(Map.of(
+        "status", "error",
+             "error","timeout must be > 0",   // human message, surfaced in the UI
+             "timeout",t));                   // raw value for debugging
+```
+
+If you return `ResponseEntity.badRequest().build()` (no body) the UI falls
+back to a bare "400 Bad Request" and your users won't know what went wrong.
+
+### YAML read: dot-literal keys, reserved key names
+
+- **Dots in YAML keys are literal, not nesting markers.** A
+  `connect-timeout-ms:` key and a `connect-timeout-ms-override:` key are two
+  unrelated entries; `@Value("${connect-timeout-ms}")` reads the first one
+  verbatim, no path parsing.
+- **Reserved key names** — avoid for configuration values:
+    - **`secret`** — the agent interprets any map containing `secret:` as a
+      secret-provider spec and will fail to load the profile in local-HTTP
+      mode. Pick `signing-secret`, `api-token`, `pass`, anything non-generic.
+    - **`controller` / `controllerClass`** — reserved by the per-profile
+      configuration schema; the agent uses them to resolve your controller
+      class and refuses to pass them through to your extension.
+
+### Controller is a singleton; guard mutable state yourself [cloud-managed]
+
+For cloud-managed extensions one controller instance serves every
+connection of the adapter, from every thread, for the whole life of the
+agent. Any plain instance field is shared state. Keep per-connection data
+in a `ConcurrentHashMap<Long, …>` keyed by `connectionId`, keep per-request
+data in local variables inside the handler, and do not touch raw instance
+fields without one of those scopes.
+
+```java
+private final ConcurrentHashMap<Long, Instant> updatedAt = new ConcurrentHashMap<>();
+
+@Override
+public void onConnectionUpdated(long connectionId, AgentConfiguration cfg) {
+    updatedAt.put(connectionId, Instant.now());
+}
+```
+
+A `private Instant updatedAt` written from `onConnectionUpdated` would make
+every connection's response reflect whichever connection last updated —
+subtle, deadly under load.
+
+Per-profile extensions get one controller per profile out of the box, so
+cross-connection contamination is impossible — but concurrent requests to
+the same profile are still a concern. The same rule applies to any mutable
+field a request handler writes.
+
+### Lifecycle callbacks run outside any HTTP request [cloud-managed]
+
+`onConnectionAdded` / `onConnectionUpdated` / `onConnectionRemoved` fire
+when the cloud configuration for the adapter changes. They do not run on an
+HTTP request thread, so every request-scoped method on
+`AgentExtensionContextV1` returns a sentinel inside a callback:
+
+- `getConnectionId()` → `-1L`
+- `getProfileConfiguration()` → only the static per-adapter keys
+- `getRequestMetadata()` → `{}`
+- `getConnectionVersion()` → `0L`
+
+Use the arguments the framework hands you — `connectionId`, `mergedConfig`,
+`newMergedConfig` — instead of reaching into the context. Exceptions thrown
+from a callback are logged and ignored; don't rely on them for anything
+load-bearing.
+
+### Detecting a connection edit [cloud-managed]
+
+Two complementary signals are available — pick whichever fits:
+
+**Framework-provided: `agent.getContext().getConnectionCreatedAt(): Instant`.**
+Returns the wall-clock instant at which the agent first observed the
+connection currently being served. The value is captured at the moment of
+the `onConnectionAdded` callback and does not change on in-place config
+updates. However, Workato performs Disconnect-then-Connect transparently
+during a connection edit — so the agent sees a remove-then-add and the
+timestamp is refreshed on every edit. Returns `null` for legacy /
+out-of-request / unknown-connection sentinels; always check.
+
+**Author-provided: lifecycle listener.** If you implement
+`AgentConnectionLifecycleV1` on your controller, record `Instant.now()` from
+the three callbacks (typically `onConnectionAdded` + `onConnectionUpdated`
+set it, `onConnectionRemoved` clears it) in a `ConcurrentHashMap<Long,
+Instant>` keyed by `connectionId`. Full control over the semantics — for
+example, `onConnectionUpdated` would refresh an author-tracked timestamp on
+every merged-config change, whereas the framework's `getConnectionCreatedAt`
+does not.
+
+The two change at different moments: the API-provided value is stable on
+in-place updates, author-tracked state is only as stable as the author
+makes it. Both reset to a fresh timestamp on a Workato edit (because of
+the Disconnect-then-Connect flow underneath).
+
+Canonical lazy cache invalidation uses either approach as the version key
+of a `ConcurrentHashMap<Long, Cached>`:
+
+```java
+record Cached(Instant createdAt, PooledHttpClient client) {}
+private final ConcurrentHashMap<Long, Cached> cache = new ConcurrentHashMap<>();
+
+@PostMapping("/{connId}/op")
+public Result op(@PathVariable long connId) {
+    Instant now = agent.getContext().getConnectionCreatedAt();
+    Cached c = cache.compute(connId, (k, old) -> {
+        if (old != null && old.createdAt.equals(now)) return old;  // unchanged
+        if (old != null) old.client.close();                        // stale — close pool
+        return new Cached(now, buildClient(agent.getContext().getProfileConfiguration()));
+    });
+    return call(c.client);
+}
+```
+
+Don't persist either timestamp, don't compare across agent restarts, don't
+log either as authoritative state.
+
+### Stateless by default across the agent group
+
+OPA agents commonly run as a group of several instances behind a load
+balancer. Workato routes each request to one arbitrary member of the
+group — the member that handled yesterday's call may not be the one that
+handles today's. **An extension should assume nothing in memory survives
+to the next request.** If you must keep state (subscription registries,
+caches larger than per-connection, scheduled tasks), source it from a
+shared store (database, Redis) or push it through an external system that
+every group member can observe. See `timer/README.md` for a concrete
+illustration of the limitation.
 
 ## Development workflow
 
@@ -111,30 +302,113 @@ helpers in step 5 (`Ref1..Ref10` do not declare `throws`).
 
 Add `<Name>Test` under `src/test/java/com/mycompany/onprem/<name>/`. The
 harness wires your controller into a hermetic Spring `MockMvc` context — no
-Jetty, no classloader isolation, no network. It takes milliseconds and runs
-on every `./gradlew test`.
+real HTTP server, no network, nothing that mimics the agent's own
+packaging. It takes milliseconds and runs on every `./gradlew test`.
 
-Covers: `@Autowired AgentExtensionApiV1`, `@Value("${…}")` injection with the
-agent's dot-literal semantics, `/ext/{profile}/*` routing, `@PathVariable` /
-`@RequestBody`, your `@ControllerAdvice` beans. Does *not* cover: Jetty
-specifics, classloader isolation from `lib_ext/`, mTLS tunnel. Full DSL +
-troubleshooting table: see **Java extension tests** below and
-`extension-api/README-extension-test.md`.
+Covers: `@Autowired AgentExtensionApiV1`, `@Value("${…}")` injection with
+dot-literal semantics, `/ext/{profile}/*` routing, `@PathVariable` /
+`@RequestBody`, your `@ControllerAdvice` beans. Does *not* cover: the
+agent's own packaging, mTLS tunnel, anything that only shows up when the
+code runs inside a deployed agent. Full DSL + troubleshooting table: see
+**Java extension tests** below and `extension-api/README-extension-test.md`.
 
 ### Step 3 — Write the Ruby connector
 
-Put `connector.rb` under `src/main/ruby/<name>/connector.rb`. The filename is
-mandatory (Workato SDK contract). The connector must:
+Put `connector.rb` under `src/main/ruby/<name>/connector.rb`. The filename
+is mandatory (Workato SDK contract). What the file must contain depends on
+the extension model you chose (see **Two extension models** above).
 
-- declare `secure_tunnel: true` — forces every HTTP call through an on-prem
-  agent group instead of leaving Workato's cloud;
-- address the agent as `http://localhost/ext/<profile>/<endpoint>` — literal
-  `localhost` is the sentinel the tunnel resolves to the agent;
-- send header `X-Workato-Connector: enforce` on every request — Workato
+Shared rules — both models:
+
+- Declare `secure_tunnel: true` — forces every HTTP call through an on-prem
+  agent group instead of leaving Workato's cloud.
+- Address the agent as `http://localhost/ext/…` — literal `localhost` is
+  the sentinel the tunnel resolves to the agent.
+- Send header `X-Workato-Connector: enforce` on every request — Workato
   rejects the call if no on-prem connection group is attached.
+- **Surface the extension's error messages via `after_error_response`.**
+  The SDK's default on a non-2xx is to raise `RequestFailedError` with a
+  generic `"<code> <reason>"` and drop the body. The UI then shows just
+  "Connection failed: 400 Bad Request". Pull the body apart and re-raise:
 
-The `profile` connection field becomes the extension profile name under
-`extensions:` in the agent's `config.yml` — it has to match exactly.
+  ```ruby
+  .after_error_response(/.*/) do |_code, body, _headers, message|
+    payload = (parse_json(body) rescue nil) || {}
+    error(payload['error'].presence || "#{message}: #{body}")
+  end
+  ```
+
+  (Pairs with the "Return 4xx with a parseable JSON body" rule in the
+  Writing-the-Java-extension section above.)
+- **Workato auto-titles output fields.** The UI generates human labels from
+  field names by splitting camelCase — `connectionVersion` renders as
+  "Connection version", `updatedAt` as "Updated at". JSON keys don't
+  change, only labels on pills do. Override with explicit `label:` when
+  needed.
+
+#### Per-profile connector
+
+- Declare one connection field named `profile`. Its value becomes the
+  `{profile}` segment in the URL and must match a key under `extensions:`
+  in the agent's `config.yml` — exact string, case-sensitive.
+- Build URLs as `http://localhost/ext/#{connection['profile']}/<endpoint>`.
+
+Full examples: `src/main/ruby/security/connector.rb`,
+`src/main/ruby/ntlm/connector.rb`, `src/main/ruby/timer/connector.rb`.
+
+#### Cloud-managed connector
+
+```ruby
+opa_extension_name = 'configuration_sample'
+
+{
+  title: "On-prem #{opa_extension_name}",
+  secure_tunnel: true, # mandatory
+  opa_extension_name: opa_extension_name, # mandatory, must match @AgentConfigSupport(name=…)
+  ...
+}
+```
+
+- **`opa_extension_name:`** must match the `@AgentConfigSupport(name = "…")`
+  on the Java class byte-for-byte, including case. A typo yields a bare
+  `404 Not Found` on every request with no helpful log. Keep the value in a
+  local variable (`opa_extension_name = '…'`) and interpolate it everywhere
+  else — single source of truth for the name.
+- **URL shape:**
+  ```ruby
+  "http://localhost/ext/#{opa_extension_name}/#{connection['_connection_id']}/<path>"
+  ```
+  Workato populates `connection['_connection_id']` for `secure_tunnel: true`
+  connectors — the lambda receives it in the `connection` hash. **Do not
+  invent your own key** (`connection['id']`, `connection['conn_id']`, …) —
+  only `_connection_id` is populated by the framework.
+- **Do not add a connection field named `profile`.** A `profile` field in
+  `connection.fields` makes Workato route the connector through a
+  different legacy pathway and your extension stops receiving
+  configuration. Pick anything else: `env`, `label`, `tenant`,
+  `instance_name` — all fine.
+
+Full example: `src/main/ruby/configuration_sample/connector.rb`.
+
+#### Common `connector.rb` mistakes
+
+- **Hard-coding the extension name all over the file** — easy to typo one
+  of the copies. Keep the name in a local variable at the top, interpolate
+  everywhere else.
+- **Forgetting `secure_tunnel: true`** — the connector loads, the UI
+  renders the form, but every request leaves Workato cloud instead of
+  reaching the agent. Hard to debug because the symptom is "cannot reach
+  localhost".
+- **Dropping the mandatory URL segment** (`profile` for per-profile,
+  `_connection_id` for cloud-managed) — common on copy-paste. The path
+  shrinks by one segment and the extension returns `404`.
+- **Letting the extension's 4xx body fall on the floor** — see
+  `after_error_response` above.
+- **Naming a connection field `profile` in a cloud-managed connector** —
+  see above; reserves the field, flips the connector back to the legacy
+  routing path.
+- **Mixing old DSL keys** — `agent_extension:` was renamed to
+  `opa_extension_name:`. Only the latter is read.
 
 ### Step 4 — Spec the connector with the Workato Connector SDK (no OPA)
 
@@ -150,20 +424,19 @@ cassettes, re-recording against a live agent, cleanup before commit): see
 
 Add `<Name>DeployedTest` under `src/test/java/com/mycompany/onprem/<name>/`.
 This is the first step that touches an actual agent on disk. The launcher
-loads the dist's own `agent-core` + `extension-api` via an isolated
-`URLClassLoader`, drops your extension class into it, writes a merged
-`config.yml`, and runs the agent in-process in the test JVM. Keep these
-tests `@Disabled` — they depend on per-machine state (deployed agent path,
-activated certs) and are run manually from the IDE.
+starts a real agent process in your test JVM with your extension class
+loaded into it and your `config.yml` applied. Keep these tests `@Disabled`
+— they depend on per-machine state (deployed agent path, activated certs)
+and are run manually from the IDE.
 
 Two complementary modes, both are present in `*DeployedTest`:
 
 - **`openLocalAccess()` + direct HTTP** — opens a local port on the agent
   and calls the controller via `agent.httpPost(Controller::method, body)` /
   `agent.requestFor(Controller::method).header(…).build()` + `agent.send(req)`.
-  Verifies the full in-agent path (classloader isolation, Jetty binding,
-  Spring dispatch) without needing the Workato cloud. In this mode the agent
-  does **not** connect to the gateway (by design — see the mode table in
+  Verifies the full HTTP serving path inside a real agent without needing
+  the Workato cloud. In this mode the agent does **not** connect to the
+  gateway (by design — see the mode table in
   `extension-api/README-extension-test.md`).
 - **No `openLocalAccess()` + `awaitGatewayConnected(Duration)`** — the agent
   stays in full gateway mode and the test blocks until the
@@ -192,22 +465,26 @@ long-lived harness for debugging real recipe runs:
    `src/test/ruby/<name>/` with `--connector ../../../main/ruby/<name>/connector.rb`.
    See **Deploying the connector to Workato** below for both paths.
 4. **In Workato, build a recipe that calls your action.** Create a
-   Connection against the custom connector, set the `profile` field to the
-   same name the DeployedTest launched (`"security"` / `"ntlm"` by default)
-   and bind it to the on-prem agent group your activated cert belongs to.
+   Connection against the custom connector and bind it to the on-prem
+   agent group your activated cert belongs to.
+    - For a per-profile connector: set the `profile` field to the same name
+      the DeployedTest launched (`"security"` / `"ntlm"` by default).
+    - For a cloud-managed connector: nothing extra — the framework assigns
+      the connection id, the agent picks it up on the next cloud push.
+
    Any trigger will do — "Run on demand" is the shortest path.
 5. **Trigger the recipe.** The request leaves the Workato cloud → traverses
    the mTLS tunnel → arrives at the in-JVM agent → hits
    `/ext/<profile>/<endpoint>` → fires your breakpoint. From that frame the
-   IDE's call stack walks the full chain: `jetty → ExtensionDispatcher →
-   DispatcherServlet → <your controller>`. Step through, mutate variables,
-   evaluate expressions — the rest of the agent keeps serving the gateway
-   on other threads.
+   IDE's call stack walks the full chain from the agent's HTTP front-end
+   down to your controller. Step through, mutate variables, evaluate
+   expressions — the rest of the agent keeps serving the gateway on other
+   threads.
 
-This loop is the fastest way to reproduce production-only bugs
-(classloader clashes with `lib_ext/`, Jetty buffering, header handling in
-the tunnel) without any build/deploy churn — rebuild only your extension
-class, re-run the test, iterate.
+This loop is the fastest way to reproduce production-only bugs — library
+version clashes with what the agent already ships, HTTP buffering, header
+handling in the tunnel — without any build/deploy churn: rebuild only your
+extension class, re-run the test, iterate.
 
 ## Project setup: Extension API and test-harness JARs
 
@@ -320,10 +597,11 @@ libraries that extension code actually imports (today: `commons-codec` for
 `Hex`, `commons-lang3` for `StringUtils`), plus our own classes under
 `com/mycompany/onprem/`. Everything else the agent provides at runtime —
 `extension-api`, Spring, Jackson, Jakarta, SLF4J, Apache HttpClient — is
-declared `compileOnly` in `build.gradle` and is **not** shaded. Packaging
-what the agent already loads would cause classloader conflicts (see
-`extension-api/README-extension-api.md` → "Add the API as a provided-scope
-dependency") and bloat the deliverable; today the jar weighs under 1 MB.
+declared `compileOnly` in `build.gradle` and is **not** shaded. Shipping
+your own copy of what the agent already provides risks version clashes at
+load time (see `extension-api/README-extension-api.md` → "Add the API as a
+provided-scope dependency") and bloats the deliverable; today the jar
+weighs under 1 MB.
 
 When you add a new third-party dependency, decide its scope with one
 question: *does the agent itself provide this at runtime?*
@@ -351,31 +629,60 @@ Useful standalone Gradle tasks:
 
 ## Installing the extension to OPA
 
-1. Add a new directory called `ext` under Workato agent install directory.
-2. Copy the extension JAR file to `ext` directory.
-3. Update the `config/config.yml` to add the `ext` file to class path.
+1. Copy the extension JAR into the agent's **`lib_ext/`** directory
+   (the conventional drop location, pre-created in every agent dist).
+2. Make sure `server.classpath` in `conf/config.yml` points at the same
+   directory:
 
-```yml
-    server:
-      classpath: C:\\Program Files\\Workato Agent\\ext
-```
+   ```yml
+   server:
+     classpath: /opt/workato/agent/lib_ext
+   ```
 
-4. Update the `config/config.yml` to configure the new extension.
+3. Register the extension. The exact YAML depends on the model (see
+   **Two extension models** above).
 
-```yml
-    extensions:
-      security:
-        controllerClass: com.mycompany.onprem.security.SecurityExtension
-        secret: HA63A3043AMMMM
-```
+   **Per-profile** — one `extensions.{profile}` block per profile, with
+   `controller:` giving the class FQCN and sibling keys supplying
+   configuration values:
+
+   ```yml
+   extensions:
+     security:
+       controller: com.mycompany.onprem.security.SecurityExtension
+       signing-secret: HA63A3043AMMMM
+   ```
+
+   **Cloud-managed** — no mandatory block. Add
+   `agent-config-support.{adapter}` only if you have static per-adapter
+   values to pin:
+
+   ```yml
+   agent-config-support:
+     configuration_sample:
+       environment: prod   # optional, admin-pinned
+   ```
+
+   The agent finds the class via its `@AgentConfigSupport(name = "…")`
+   annotation at startup — no FQCN in YAML. Per-connection values arrive
+   from the Workato cloud without any admin action.
+
+4. **Restart the agent.** The extension classloader is built once at
+   startup; a new or updated JAR is not picked up until the agent is
+   restarted. The same applies to any edit of `extensions:` or
+   `agent-config-support:` — the agent reads the file once.
+
+5. **Verify.** `GET http://<agent>/health` lists every registered
+   extension. Your extension should appear there with
+   `status: "enabled"` before you expect any request to work.
 
 ## Java extension tests
 
 Unit tests for the on-prem extensions live under
 `src/test/java/com/mycompany/onprem/`. They run against the **mock Extension
 API** shipped as `extension-test-<version>.jar` — no running agent, no
-classloader isolation, no Jetty. The authoritative reference for the mock
-harness itself is
+real HTTP server, nothing that mimics the agent's own packaging. The
+authoritative reference for the mock harness itself is
 [`extension-api/README-extension-test.md`](extension-api/README-extension-test.md)
 (generated on every build). The section below is a quick practical overview;
 anything that contradicts the generated reference, trust the reference.
@@ -527,7 +834,7 @@ wrong interpreter.
 
 **With the JetBrains Ruby plugin (Ultimate or RubyMine).** Point
 *Preferences → Languages & Frameworks → Ruby SDK and Gems* at
-`~/.asdf/installs/ruby/3.2.8/bin/ruby`, enable **Use bundler** under
+`~/.asdf/installs/ruby/3.4.5/bin/ruby`, enable **Use bundler** under
 *Ruby → RSpec*, and in the RSpec run-configuration template set
 **Working directory** to the per-connector subdir (`src/test/ruby/<name>`) —
 otherwise VCR will look for cassettes relative to the wrong CWD. Afterwards
@@ -557,13 +864,13 @@ commands for both runners — copy-paste into the IDE run config.
 CONNECTOR_PATH = File.expand_path('../../../../main/ruby/<name>/connector.rb', __dir__).freeze
 
 RSpec.describe 'onprem <name> connector' do
-  let(:settings)  { Workato::Connector::Sdk::Settings.from_default_file }
+  let(:settings) { Workato::Connector::Sdk::Settings.from_default_file }
   let(:connector) { Workato::Connector::Sdk::Connector.from_file(CONNECTOR_PATH, settings) }
 
   describe 'actions.<action_name>' do
     it 'does the thing' do
       VCR.use_cassette('<cassette_name>') do
-        output = connector.actions.<action_name>.execute(settings, 'field' => 'value')
+        output = connector.actions.< action_name >.execute(settings, 'field' => 'value')
         expect(output['something']).to eq(...)
       end
     end
@@ -571,7 +878,7 @@ RSpec.describe 'onprem <name> connector' do
 
   describe 'methods.<method_name>' do
     it 'returns the expected value' do
-      expect(connector.methods.<method_name>(settings)).to eq(...)
+      expect(connector.methods.< method_name > (settings)).to eq(...)
     end
   end
 end
@@ -664,13 +971,13 @@ which extensions to mount. The profile names must match the Ruby
 
 ```yml
 server:
-  classpath: <AGENT_HOME>/ext
+  classpath: <AGENT_HOME>/lib_ext
 extensions:
   security:
-    controllerClass: com.mycompany.onprem.security.SecurityExtension
-    secret: a-local-test-secret
+    controller: com.mycompany.onprem.security.SecurityExtension
+    signing-secret: a-local-test-secret
   ntlm:
-    controllerClass: com.mycompany.onprem.ntlm.NtlmExtension
+    controller: com.mycompany.onprem.ntlm.NtlmExtension
     # connect-timeout-ms / read-timeout-ms can be set here too
 ```
 
@@ -729,7 +1036,7 @@ rm src/test/resources/tape_library/<name>/<cassette_name>.yml
 
 ```ruby
 # src/test/ruby/<name>/spec/spec_helper.rb — temporarily
-c.default_cassette_options = { record: :once }   # was :none
+c.default_cassette_options = { record: :once } # was :none
 ```
 
 ```sh
