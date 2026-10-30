@@ -67,34 +67,35 @@ class ConfigurationSampleExtensionTest {
 
         assertEquals("test", b.at("/environment").asString());
         assertEquals(5000, b.at("/timeout").asInt());
-        // connectionVersion is surfaced in the response as a long; the harness
-        // only bumps it in response to explicit .triggerConnection* calls, so
-        // for a plain .connection(...) registration it stays at the default
-        // sentinel (0). The production agent bumps it on cloud push diff.
-        assertTrue(b.at("/connectionVersion").isNumber(),
-                "connectionVersion should be a number: " + b.at("/connectionVersion"));
     }
 
     @Test
-    void infoSurfacesUpdatedAtAfterLifecycleCallback() throws Exception {
-        // Trigger an add callback so updatedAt is populated for connection 100.
+    void infoSurfacesBothUpdatedAtAndCreatedAtAfterLifecycleCallback() throws Exception {
+        // triggerConnectionAdded fires onConnectionAdded on the controller (which
+        // records updatedAt) AND records the harness-side createdAt timestamp
+        // the framework-provided getConnectionCreatedAt() reads back.
         agent.triggerConnectionAdded(100L, Map.of("timeout", 7000));
         useConnection(100L);
 
         JsonNode b = body(call("/100/info"));
         assertEquals(7000, b.at("/timeout").asInt());
         assertFalse(b.at("/updatedAt").isNull(),
-                "updatedAt should be set after onConnectionAdded");
+                "updatedAt should be set after onConnectionAdded (our own tracking)");
+        assertFalse(b.at("/createdAt").isNull(),
+                "createdAt should be set after onConnectionAdded (framework-provided)");
     }
 
     @Test
-    void infoShowsNullUpdatedAtForUnseenConnection() throws Exception {
+    void infoShowsBothTimestampsNullForUnseenConnection() throws Exception {
         // Connection 43 was registered via the builder's .connection(...) which
-        // does NOT invoke lifecycle callbacks — updatedAt must stay null.
+        // does NOT invoke lifecycle callbacks — neither our own updatedAt nor
+        // the framework-tracked createdAt should be set.
         useConnection(43L);
         JsonNode b = body(call("/43/info"));
         assertTrue(b.at("/updatedAt").isNull(),
                 "updatedAt should be null when no lifecycle callback has fired");
+        assertTrue(b.at("/createdAt").isNull(),
+                "createdAt should be null when no lifecycle callback has fired");
     }
 
     @Test

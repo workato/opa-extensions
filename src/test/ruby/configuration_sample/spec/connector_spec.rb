@@ -22,14 +22,14 @@ RSpec.describe 'onprem configuration_sample connector' do
   let(:connector) { Workato::Connector::Sdk::Connector.from_file(CONNECTOR_PATH, settings) }
 
   describe 'actions.get_info' do
-    it 'calls the /info endpoint and returns static + cloud params and version' do
+    it 'calls the /info endpoint and returns static + cloud params and both timestamps' do
       VCR.use_cassette('get_info_connection_42') do
         output = connector.actions.get_info.execute(settings, {})
         expect(output).to be_a(Hash)
         expect(output['environment']).to eq('prod')
         expect(output['timeout']).to eq(5000)
-        expect(output['connectionVersion']).to eq(1)
-        expect(output['updatedAt']).to eq('2026-10-29T12:00:00Z')
+        expect(output['updatedAt']).to eq('2026-10-30T12:05:00Z')
+        expect(output['createdAt']).to eq('2026-10-30T12:00:00Z')
       end
     end
   end

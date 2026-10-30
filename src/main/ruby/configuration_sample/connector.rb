@@ -61,8 +61,8 @@ opa_extension_name = 'configuration_sample'
         [
           { name: 'environment' },
           { name: 'timeout', type: 'integer' },
-          { name: 'connectionVersion', type: 'integer' },
-          { name: 'updatedAt' }
+          { name: 'updatedAt' },
+          { name: 'createdAt' }
         ]
       },
 
@@ -75,8 +75,8 @@ opa_extension_name = 'configuration_sample'
         {
           'environment' => 'prod',
           'timeout' => 5000,
-          'connectionVersion' => 1,
-          'updatedAt' => '2026-10-29T12:00:00Z'
+          'updatedAt' => '2026-10-30T12:00:00Z',
+          'createdAt' => '2026-10-30T12:00:00Z'
         }
       }
     }

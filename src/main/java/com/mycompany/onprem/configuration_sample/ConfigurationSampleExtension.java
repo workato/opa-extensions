@@ -41,9 +41,22 @@ import java.util.function.Supplier;
  * <ul>
  *   <li>{@code GET /{connId}/test} — connection health check: 200 when
  *       {@code timeout > 0}, 400 otherwise.</li>
- *   <li>{@code GET /{connId}/info} — returns the two parameter values plus the
- *       connection's {@code connectionVersion} and the timestamp of the last
- *       cloud-reload callback for that connection.</li>
+ *   <li>{@code GET /{connId}/info} — returns the two parameter values plus
+ *       <b>two parallel views of the connection's "last change" timestamp</b>,
+ *       to demonstrate the two complementary ways to detect a connection edit:
+ *       <ul>
+ *         <li>{@code updatedAt} — recorded by this controller itself in
+ *             {@code onConnectionAdded} / {@code onConnectionUpdated} via the
+ *             lifecycle-listener interface ({@link AgentConnectionLifecycleV1}).</li>
+ *         <li>{@code createdAt} — read directly from the framework via
+ *             {@code agent.getContext().getConnectionCreatedAt()} on every
+ *             request; the framework captures the instant on the add callback
+ *             and does not refresh it on in-place config updates — only an
+ *             edit (Workato performs Disconnect-then-Connect transparently)
+ *             bumps the value.</li>
+ *       </ul>
+ *       Both approaches change on every connection edit; they are shown
+ *       side-by-side so an author can pick whichever fits their model.</li>
  * </ul>
  */
 @AgentConfigSupport(name = "configuration_sample")
@@ -84,9 +97,13 @@ public class ConfigurationSampleExtension implements AgentConnectionLifecycleV1 
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("environment", environment);
         response.put("timeout", timeout.get());
-        response.put("connectionVersion", agent.getContext().getConnectionVersion());
-        Instant ts = updatedAt.get(connId);
-        response.put("updatedAt", ts == null ? null : ts.toString());
+        // (a) Our own tracking via the AgentConnectionLifecycleV1 callbacks.
+        Instant ourTs = updatedAt.get(connId);
+        response.put("updatedAt", ourTs == null ? null : ourTs.toString());
+        // (b) Framework-provided creation time via the extension API — no
+        //     lifecycle listener needed on the controller side.
+        Instant apiTs = agent.getContext().getConnectionCreatedAt();
+        response.put("createdAt", apiTs == null ? null : apiTs.toString());
         return response;
     }
 

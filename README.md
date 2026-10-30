@@ -117,10 +117,12 @@ shape across every error endpoint also makes action-level `execute:` errors
 usable in recipes:
 
 ```java
-return ResponseEntity.badRequest().body(Map.of(
-    "status", "error",
-    "error", "timeout must be > 0",   // human message, surfaced in the UI
-    "timeout", t));                   // raw value for debugging
+return ResponseEntity.badRequest().
+
+body(Map.of(
+        "status", "error",
+             "error","timeout must be > 0",   // human message, surfaced in the UI
+             "timeout",t));                   // raw value for debugging
 ```
 
 If you return `ResponseEntity.badRequest().build()` (no body) the UI falls
@@ -184,18 +186,54 @@ Use the arguments the framework hands you — `connectionId`, `mergedConfig`,
 from a callback are logged and ignored; don't rely on them for anything
 load-bearing.
 
-### `connectionVersion` is a soft hint, not a system of record [cloud-managed]
+### Detecting a connection edit [cloud-managed]
 
-- Monotonic within one agent lifetime.
-- Starts at `1` the first time the framework reports the connection,
-  increments on each change to the merged config.
-- Resets to `1` after an `onConnectionRemoved` → `onConnectionAdded` pair,
-  which happens on genuine deletion of the connection, user-triggered
-  Disconnect, and the first configuration delivery after agent restart.
+Two complementary signals are available — pick whichever fits:
 
-Treat it as the version key of a `ConcurrentHashMap<Long, Cached>` for lazy
-cache invalidation. Don't persist it, don't compare it across agent
-restarts, don't log it as authoritative state.
+**Framework-provided: `agent.getContext().getConnectionCreatedAt(): Instant`.**
+Returns the wall-clock instant at which the agent first observed the
+connection currently being served. The value is captured at the moment of
+the `onConnectionAdded` callback and does not change on in-place config
+updates. However, Workato performs Disconnect-then-Connect transparently
+during a connection edit — so the agent sees a remove-then-add and the
+timestamp is refreshed on every edit. Returns `null` for legacy /
+out-of-request / unknown-connection sentinels; always check.
+
+**Author-provided: lifecycle listener.** If you implement
+`AgentConnectionLifecycleV1` on your controller, record `Instant.now()` from
+the three callbacks (typically `onConnectionAdded` + `onConnectionUpdated`
+set it, `onConnectionRemoved` clears it) in a `ConcurrentHashMap<Long,
+Instant>` keyed by `connectionId`. Full control over the semantics — for
+example, `onConnectionUpdated` would refresh an author-tracked timestamp on
+every merged-config change, whereas the framework's `getConnectionCreatedAt`
+does not.
+
+The two change at different moments: the API-provided value is stable on
+in-place updates, author-tracked state is only as stable as the author
+makes it. Both reset to a fresh timestamp on a Workato edit (because of
+the Disconnect-then-Connect flow underneath).
+
+Canonical lazy cache invalidation uses either approach as the version key
+of a `ConcurrentHashMap<Long, Cached>`:
+
+```java
+record Cached(Instant createdAt, PooledHttpClient client) {}
+private final ConcurrentHashMap<Long, Cached> cache = new ConcurrentHashMap<>();
+
+@PostMapping("/{connId}/op")
+public Result op(@PathVariable long connId) {
+    Instant now = agent.getContext().getConnectionCreatedAt();
+    Cached c = cache.compute(connId, (k, old) -> {
+        if (old != null && old.createdAt.equals(now)) return old;  // unchanged
+        if (old != null) old.client.close();                        // stale — close pool
+        return new Cached(now, buildClient(agent.getContext().getProfileConfiguration()));
+    });
+    return call(c.client);
+}
+```
+
+Don't persist either timestamp, don't compare across agent restarts, don't
+log either as authoritative state.
 
 ### Stateless by default across the agent group
 
@@ -325,7 +363,7 @@ opa_extension_name = 'configuration_sample'
 
 {
   title: "On-prem #{opa_extension_name}",
-  secure_tunnel: true,                    # mandatory
+  secure_tunnel: true, # mandatory
   opa_extension_name: opa_extension_name, # mandatory, must match @AgentConfigSupport(name=…)
   ...
 }
