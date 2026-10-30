@@ -31,6 +31,7 @@ GEM
       bigdecimal
       rexml
     crass (1.0.7)
+    csv (3.3.7)
     diff-lcs (1.6.2)
     domain_name (0.7.20261007)
     drb (2.2.3)
@@ -163,6 +164,7 @@ PLATFORMS
   x86_64-linux-musl
 
 DEPENDENCIES
+  csv
   rspec
   vcr
   webmock
@@ -183,6 +185,7 @@ CHECKSUMS
   cookiejar (0.3.4) sha256=11b16acfc4baf7a0f463c21a6212005e04e25f5554d4d9f24d97f3492dfda0df
   crack (1.0.1) sha256=ff4a10390cd31d66440b7524eb1841874db86201d5b70032028553130b6d4c7e
   crass (1.0.7) sha256=94868719948664c89ddcaf0a37c65048413dfcb1c869470a5f7a7ceb5390b295
+  csv (3.3.7) sha256=15a3f16f6628da8664d455eb634e7f22031bcf53044923caf56975109e71b9f8
   diff-lcs (1.6.2) sha256=9ae0d2cba7d4df3075fe8cd8602a8604993efc0dfa934cff568969efb1909962
   domain_name (0.7.20261007) sha256=0976c6ab837dbde991b433d03acc38fdb91fa8839df31a1ed75ce0318dc0441c
   drb (2.2.3) sha256=0b00d6fdb50995fe4a45dea13663493c841112e4068656854646f418fda13373

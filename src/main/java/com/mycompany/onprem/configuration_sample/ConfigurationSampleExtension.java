@@ -45,10 +45,10 @@ import java.util.function.Supplier;
  *       <b>two parallel views of the connection's "last change" timestamp</b>,
  *       to demonstrate the two complementary ways to detect a connection edit:
  *       <ul>
- *         <li>{@code updatedAt} — recorded by this controller itself in
- *             {@code onConnectionAdded} / {@code onConnectionUpdated} via the
- *             lifecycle-listener interface ({@link AgentConnectionLifecycleV1}).</li>
- *         <li>{@code createdAt} — read directly from the framework via
+ *         <li>{@code updatedAtByMyself} — recorded by this controller itself
+ *             in {@code onConnectionAdded} / {@code onConnectionUpdated} via
+ *             the lifecycle-listener interface ({@link AgentConnectionLifecycleV1}).</li>
+ *         <li>{@code updatedAtByApi} — read directly from the framework via
  *             {@code agent.getContext().getConnectionCreatedAt()} on every
  *             request; the framework captures the instant on the add callback
  *             and does not refresh it on in-place config updates — only an
@@ -99,11 +99,11 @@ public class ConfigurationSampleExtension implements AgentConnectionLifecycleV1 
         response.put("timeout", timeout.get());
         // (a) Our own tracking via the AgentConnectionLifecycleV1 callbacks.
         Instant ourTs = updatedAt.get(connId);
-        response.put("updatedAt", ourTs == null ? null : ourTs.toString());
+        response.put("updatedAtByMyself", ourTs == null ? null : ourTs.toString());
         // (b) Framework-provided creation time via the extension API — no
         //     lifecycle listener needed on the controller side.
         Instant apiTs = agent.getContext().getConnectionCreatedAt();
-        response.put("createdAt", apiTs == null ? null : apiTs.toString());
+        response.put("updatedAtByApi", apiTs == null ? null : apiTs.toString());
         return response;
     }
 

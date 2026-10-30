@@ -28,8 +28,8 @@ RSpec.describe 'onprem configuration_sample connector' do
         expect(output).to be_a(Hash)
         expect(output['environment']).to eq('prod')
         expect(output['timeout']).to eq(5000)
-        expect(output['updatedAt']).to eq('2026-10-30T12:05:00Z')
-        expect(output['createdAt']).to eq('2026-10-30T12:00:00Z')
+        expect(output['updatedAtByMyself']).to eq('2026-10-30T12:05:00Z')
+        expect(output['updatedAtByApi']).to eq('2026-10-30T12:00:00Z')
       end
     end
   end

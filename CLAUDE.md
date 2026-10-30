@@ -225,7 +225,7 @@ Conventions, copied verbatim from `SecurityExtensionDeployedTest` /
 ## Toolchain
 
 - Java 21, Gradle 8.10.2.
-- Ruby 3.2.8 (pinned via `.tool-versions` for asdf). The Workato SDK gem
+- Ruby 3.4.5 (pinned via `.tool-versions` for asdf). The Workato SDK gem
   (`workato-connector-sdk`) is self-contained — no Workato cloud / account
   needed to run tests.
 - The Gradle `bundleBin` helper locates `bundle` in this order:

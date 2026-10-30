@@ -7,21 +7,21 @@ Minimal demonstration of the **cloud-managed extension model**. One
   check: 200 when the cloud-pushed `timeout` is positive, 400 otherwise.
 - `GET /ext/configuration_sample/{connectionId}/info` — returns the two
   parameter values plus **two parallel timestamps** showing the two
-  complementary ways to detect a connection edit: `updatedAt` (tracked by
-  the controller itself via the lifecycle-listener interface) and
-  `createdAt` (read directly from the framework via
+  complementary ways to detect a connection edit: `updatedAtByMyself`
+  (tracked by the controller itself via the lifecycle-listener interface)
+  and `updatedAtByApi` (read directly from the framework via
   `getConnectionCreatedAt()`).
 
 ## Features demonstrated
 
-| Feature                                                         | How                                                                                                                                                                                                                                                           |
-|-----------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `@AgentConfigSupport(name = "configuration_sample")`            | Opts the controller into cloud-managed routing. The agent registers the class on first cloud push that carries `custom.configuration_sample.*`.                                                                                                               |
-| `@Value("${environment:unknown}") String` — raw-type static     | Resolved **once** at bean init from `agent-config-support.configuration_sample.environment`. Admin-pinned, same value for every connection.                                                                                                                   |
-| `@Value("${timeout:0}") Supplier<Integer>` — connection-dynamic | The framework installs a lazy supplier that reads `getProfileConfiguration().get("timeout")` of the current request's connection on every `.get()` call. Default `0` applies when the key is absent.                                                          |
-| `AgentConnectionLifecycleV1` — manual tracking                  | The controller implements the three callbacks to record a per-connection `updatedAt` timestamp in a `ConcurrentHashMap<Long, Instant>`. Full control over the semantics; shown as the author-managed signal in `/info`.                                       |
-| `getConnectionCreatedAt()` — framework-provided tracking        | Also surfaced in `/info` as `createdAt`. The framework captures the instant on the add callback and does not refresh it on in-place config updates — only an edit (Workato performs Disconnect-then-Connect transparently) bumps the value. Zero author code. |
-| Validation at the extension boundary                            | `/test` rejects the request with HTTP 400 when `timeout <= 0`. The Workato connector exposes this as the "Test connection" button; invalid connections never make it into recipes.                                                                            |
+| Feature                                                         | How                                                                                                                                                                                                                                                                |
+|-----------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `@AgentConfigSupport(name = "configuration_sample")`            | Opts the controller into cloud-managed routing. The agent registers the class on first cloud push that carries `custom.configuration_sample.*`.                                                                                                                    |
+| `@Value("${environment:unknown}") String` — raw-type static     | Resolved **once** at bean init from `agent-config-support.configuration_sample.environment`. Admin-pinned, same value for every connection.                                                                                                                        |
+| `@Value("${timeout:0}") Supplier<Integer>` — connection-dynamic | The framework installs a lazy supplier that reads `getProfileConfiguration().get("timeout")` of the current request's connection on every `.get()` call. Default `0` applies when the key is absent.                                                               |
+| `AgentConnectionLifecycleV1` — manual tracking                  | The controller implements the three callbacks to record a per-connection timestamp in a `ConcurrentHashMap<Long, Instant>`, surfaced in `/info` as `updatedAtByMyself`. Full control over the semantics.                                                           |
+| `getConnectionCreatedAt()` — framework-provided tracking        | Also surfaced in `/info` as `updatedAtByApi`. The framework captures the instant on the add callback and does not refresh it on in-place config updates — only an edit (Workato performs Disconnect-then-Connect transparently) bumps the value. Zero author code. |
+| Validation at the extension boundary                            | `/test` rejects the request with HTTP 400 when `timeout <= 0`. The Workato connector exposes this as the "Test connection" button; invalid connections never make it into recipes.                                                                                 |
 
 ## HTTP endpoints
 
@@ -31,8 +31,8 @@ Minimal demonstration of the **cloud-managed extension model**. One
 {
   "environment": "prod",
   "timeout": 5000,
-  "updatedAt": "2026-10-30T12:05:00Z",
-  "createdAt": "2026-10-30T12:00:00Z"
+  "updatedAtByMyself": "2026-10-30T12:05:00Z",
+  "updatedAtByApi": "2026-10-30T12:00:00Z"
 }
 ```
 

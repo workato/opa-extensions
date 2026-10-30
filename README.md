@@ -834,7 +834,7 @@ wrong interpreter.
 
 **With the JetBrains Ruby plugin (Ultimate or RubyMine).** Point
 *Preferences → Languages & Frameworks → Ruby SDK and Gems* at
-`~/.asdf/installs/ruby/3.2.8/bin/ruby`, enable **Use bundler** under
+`~/.asdf/installs/ruby/3.4.5/bin/ruby`, enable **Use bundler** under
 *Ruby → RSpec*, and in the RSpec run-configuration template set
 **Working directory** to the per-connector subdir (`src/test/ruby/<name>`) —
 otherwise VCR will look for cassettes relative to the wrong CWD. Afterwards

@@ -70,32 +70,32 @@ class ConfigurationSampleExtensionTest {
     }
 
     @Test
-    void infoSurfacesBothUpdatedAtAndCreatedAtAfterLifecycleCallback() throws Exception {
+    void infoSurfacesBothTimestampsAfterLifecycleCallback() throws Exception {
         // triggerConnectionAdded fires onConnectionAdded on the controller (which
-        // records updatedAt) AND records the harness-side createdAt timestamp
-        // the framework-provided getConnectionCreatedAt() reads back.
+        // records updatedAtByMyself) AND records the harness-side framework
+        // timestamp that getConnectionCreatedAt() reads back as updatedAtByApi.
         agent.triggerConnectionAdded(100L, Map.of("timeout", 7000));
         useConnection(100L);
 
         JsonNode b = body(call("/100/info"));
         assertEquals(7000, b.at("/timeout").asInt());
-        assertFalse(b.at("/updatedAt").isNull(),
-                "updatedAt should be set after onConnectionAdded (our own tracking)");
-        assertFalse(b.at("/createdAt").isNull(),
-                "createdAt should be set after onConnectionAdded (framework-provided)");
+        assertFalse(b.at("/updatedAtByMyself").isNull(),
+                "updatedAtByMyself should be set after onConnectionAdded (our own tracking)");
+        assertFalse(b.at("/updatedAtByApi").isNull(),
+                "updatedAtByApi should be set after onConnectionAdded (framework-provided)");
     }
 
     @Test
     void infoShowsBothTimestampsNullForUnseenConnection() throws Exception {
         // Connection 43 was registered via the builder's .connection(...) which
-        // does NOT invoke lifecycle callbacks — neither our own updatedAt nor
-        // the framework-tracked createdAt should be set.
+        // does NOT invoke lifecycle callbacks — neither our own nor the
+        // framework-tracked timestamp should be set.
         useConnection(43L);
         JsonNode b = body(call("/43/info"));
-        assertTrue(b.at("/updatedAt").isNull(),
-                "updatedAt should be null when no lifecycle callback has fired");
-        assertTrue(b.at("/createdAt").isNull(),
-                "createdAt should be null when no lifecycle callback has fired");
+        assertTrue(b.at("/updatedAtByMyself").isNull(),
+                "updatedAtByMyself should be null when no lifecycle callback has fired");
+        assertTrue(b.at("/updatedAtByApi").isNull(),
+                "updatedAtByApi should be null when no lifecycle callback has fired");
     }
 
     @Test
