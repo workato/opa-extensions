@@ -224,3 +224,38 @@ Conventions, copied verbatim from `SecurityExtensionDeployedTest` /
   request fails loudly.
 - To iterate locally without going through Gradle: `cd src/test/ruby/<name>
   && bundle install && bundle exec rspec`.
+
+### How `bundle` is located by the Gradle tasks
+
+The Ruby-version requirement (`ruby '~> 3.4.0'`) is enforced by the
+`Gemfile`, not by any repo-level `.tool-versions` / `.ruby-version`. To make
+that work across every common Ruby setup, the two Groovy helpers in
+`build.gradle` — `bundleBin()` and `rubyEnv()` — walk the following
+decision tree, in this order, every time a Ruby task runs:
+
+| Preference                                      | When it fires                                                 | What happens                                                                                                                                                                                                                                                                  |
+|-------------------------------------------------|---------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **1. `BUNDLE_BIN` env var**                     | The developer or CI set it and it points at an existing file. | Used verbatim. Intended for CI runners where Ruby is provisioned a non-standard way (e.g. `ruby/setup-ruby@v1` exposes a custom bundler path) and for one-off local overrides.                                                                                                |
+| **2. asdf shim + injected `ASDF_RUBY_VERSION`** | `~/.asdf/installs/ruby/3.4.x/` exists for at least one `x`.   | `bundleBin()` returns `~/.asdf/shims/bundle`; `rubyEnv()` injects `ASDF_RUBY_VERSION=<highest installed 3.4.x>` into the Exec task. The asdf shim therefore resolves without needing a `.tool-versions` file in the repo.                                                     |
+| **3. Plain `bundle` from PATH**                 | No asdf 3.4.x installed (or asdf is not installed at all).    | `bundleBin()` returns the literal string `'bundle'`; Gradle's Exec resolves it via its parent process PATH. Works for rbenv-shims, chruby, system Ruby, or anything else that puts `bundle` on PATH. `rubyEnv()` returns an empty map in this case — no environment mutation. |
+
+No tie-breakers beyond that list. The function ordering is load-bearing:
+option 2 is tried *only* when a matching install exists so a customer who
+has asdf installed for other tools (Node, Python) but manages Ruby via
+rbenv / chruby / system does not get pinned to the asdf shim they are
+deliberately avoiding.
+
+Downstream failure modes:
+
+- **"command not found: bundle"** → you reached option 3 but there is no
+  `bundle` on PATH. Install bundler (`gem install bundler` under whichever
+  Ruby you use) or set `BUNDLE_BIN` to point at it.
+- **"Your Ruby version is 3.3.x, but your Gemfile specified ~> 3.4.0"** →
+  Bundler's enforcement firing correctly. Install Ruby 3.4+ in whichever
+  version manager you use; no repo-level change needed.
+- **"No version is set for command ruby" from the asdf shim** → you hit
+  option 2 but the computed `ASDF_RUBY_VERSION` points at a version that
+  does not actually resolve. Usually means the asdf-ruby plugin is
+  partially installed. Run `asdf install ruby 3.4.5` (or whatever version
+  is on disk under `~/.asdf/installs/ruby/`) to repair, or set
+  `BUNDLE_BIN` to bypass asdf entirely.

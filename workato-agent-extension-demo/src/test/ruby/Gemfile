@@ -1,5 +1,10 @@
 source 'https://rubygems.org'
 
+# Minimum Ruby version — enforced by Bundler. No .tool-versions / .ruby-version
+# file is shipped; use whichever version manager (asdf, rbenv, chruby, system
+# Ruby) satisfies this constraint.
+ruby '~> 3.4.0'
+
 gem 'workato-connector-sdk'
 
 # Ruby 3.4+ moved `csv` out of stdlib into a bundled gem. workato-connector-sdk

@@ -96,18 +96,41 @@ jar {
 // Hooks into `check` so the full build runs the Ruby suite alongside Java.
 // ---------------------------------------------------------------------------
 
-// Resolve `bundle` explicitly. Gradle's Exec searches the parent process PATH,
-// not the child's env, so we must hand it an absolute path when the parent's
-// PATH shadows the Ruby we actually want.
-// Preference order:
+// Resolve `bundle` and (if using asdf) the matching ASDF_RUBY_VERSION so the
+// asdf shim resolves without a .tool-versions file in the repo. The Gemfile's
+// `ruby '~> 3.4.0'` is the floor; we auto-pick the highest installed 3.4.x
+// under ~/.asdf/installs/ruby/.
+//
+// Preference order for the bundle executable:
 //   1. BUNDLE_BIN env var — explicit override (set this on CI if needed).
-//   2. ~/.asdf/shims/bundle — if asdf is installed (user's dev setup).
+//   2. ~/.asdf/shims/bundle — if asdf is installed. We also compute the matching
+//      3.4.x and inject ASDF_RUBY_VERSION onto the Exec task's environment so
+//      the shim resolves without a .tool-versions file.
 //   3. plain `bundle` — fallback (whatever is first on PATH).
+def rubyEnv = {
+    def installs = new File("${System.getenv('HOME')}/.asdf/installs/ruby")
+    if (!installs.isDirectory()) return [:]
+    def candidates = installs.list()?.findAll { it ==~ /3\.4\.\d+/ } ?: []
+    if (candidates.isEmpty()) return [:]
+    def pick = candidates.sort(false) { a, b ->
+        def ap = a.tokenize('.').collect { it as int }
+        def bp = b.tokenize('.').collect { it as int }
+        [ap, bp].transpose().findResult(0) { x, y -> x <=> y ?: null }
+    }.last()
+    [ASDF_RUBY_VERSION: pick]
+}
+
 def bundleBin = {
     def override = System.getenv('BUNDLE_BIN')
     if (override && new File(override).isFile()) return override
-    def shim = new File("${System.getenv('HOME')}/.asdf/shims/bundle")
-    shim.isFile() ? shim.absolutePath : 'bundle'
+    // Prefer the asdf shim only when asdf also has a matching Ruby install —
+    // otherwise the shim fails with "no version set". Without a matching
+    // install, fall back to plain `bundle` from PATH (rbenv / chruby / system).
+    if (rubyEnv().containsKey('ASDF_RUBY_VERSION')) {
+        def shim = new File("${System.getenv('HOME')}/.asdf/shims/bundle")
+        if (shim.isFile()) return shim.absolutePath
+    }
+    'bundle'
 }
 
 // One shared Gemfile + Gemfile.lock live at src/test/ruby/; bundler walks
@@ -117,6 +140,7 @@ task rubyBundleInstall(type: Exec) {
     group = 'verification'
     description = 'bundle install for the shared src/test/ruby/ Gemfile.'
     workingDir file('src/test/ruby')
+    environment rubyEnv()
     commandLine bundleBin(), 'install', '--quiet'
 }
 
@@ -144,6 +168,7 @@ task securityRspec(type: Exec) {
     description = rspecDescription('security')
     dependsOn rubyBundleInstall
     workingDir file('src/test/ruby/security')
+    environment rubyEnv()
     commandLine rspecCommand(project.findProperty('spec'))
 }
 
@@ -152,6 +177,7 @@ task ntlmRspec(type: Exec) {
     description = rspecDescription('ntlm')
     dependsOn rubyBundleInstall
     workingDir file('src/test/ruby/ntlm')
+    environment rubyEnv()
     commandLine rspecCommand(project.findProperty('spec'))
 }
 
@@ -160,6 +186,7 @@ task timerRspec(type: Exec) {
     description = rspecDescription('timer')
     dependsOn rubyBundleInstall
     workingDir file('src/test/ruby/timer')
+    environment rubyEnv()
     commandLine rspecCommand(project.findProperty('spec'))
 }
 

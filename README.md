@@ -51,9 +51,10 @@ each with its own README explaining which API features it demonstrates.
 
 - **Java:** 21 target. Gradle wrapper is 9.9.1 (supports JDK 25+/26 as the
   launcher JVM).
-- **Ruby:** 3.4.5 (pinned via `.tool-versions` for asdf). Only the demo
-  module uses Ruby — the sibling connector tests run via `bundle exec rspec`
-  through Gradle.
+- **Ruby:** 3.4+ (enforced by the Gemfile's `ruby '~> 3.4.0'` directive —
+  no `.tool-versions` or `.ruby-version` file in the repo; use whichever
+  Ruby manager you prefer or system Ruby). Only the demo module uses Ruby —
+  the sibling connector tests run via `bundle exec rspec` through Gradle.
 
 ### Dependency versions
 

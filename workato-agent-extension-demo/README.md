@@ -444,12 +444,14 @@ under `src/test/resources/tape_library/`.
 | `./gradlew :<name>Rspec -Pspec=spec/connector_spec.rb:12`                | One example by file:line (path containing `/` or `:` wins).          |
 | `cd src/test/ruby/<name> && bundle exec rspec [spec_path[:line]] [-e …]` | Fastest local iteration — skips Gradle, full rspec CLI.              |
 
-Prerequisites: Ruby 3.4.x (pinned in `.tool-versions` for asdf; works with any
-version manager or system Ruby that satisfies it) and `bundler`. The Gradle
-tasks locate `bundle` via `$BUNDLE_BIN` → `~/.asdf/shims/bundle` → `bundle` on
-PATH, in that order. On CI runners that provision Ruby differently
-(e.g., `ruby/setup-ruby`), set `BUNDLE_BIN` if the default lookup picks the
-wrong interpreter.
+Prerequisites: Ruby 3.4+ and `bundler`. The repo does NOT ship a
+`.tool-versions` / `.ruby-version` file — the minimum version is enforced
+by the Gemfile's `ruby '~> 3.4.0'` directive (Bundler fails fast if the
+active Ruby is incompatible). Pick whichever version manager you prefer
+(asdf, rbenv, chruby, system Ruby). The Gradle tasks locate `bundle` via
+`$BUNDLE_BIN` → `~/.asdf/shims/bundle` → `bundle` on PATH, in that order.
+On CI runners that provision Ruby differently (e.g., `ruby/setup-ruby`),
+set `BUNDLE_BIN` if the default lookup picks the wrong interpreter.
 
 ### Running a spec from IntelliJ IDEA
 
@@ -485,13 +487,13 @@ commands for both runners — copy-paste into the IDE run config.
 CONNECTOR_PATH = File.expand_path('../../../../main/ruby/<name>/connector.rb', __dir__).freeze
 
 RSpec.describe 'onprem <name> connector' do
-  let(:settings)  { Workato::Connector::Sdk::Settings.from_default_file }
+  let(:settings) { Workato::Connector::Sdk::Settings.from_default_file }
   let(:connector) { Workato::Connector::Sdk::Connector.from_file(CONNECTOR_PATH, settings) }
 
   describe 'actions.<action_name>' do
     it 'does the thing' do
       VCR.use_cassette('<cassette_name>') do
-        output = connector.actions.<action_name>.execute(settings, 'field' => 'value')
+        output = connector.actions.< action_name >.execute(settings, 'field' => 'value')
         expect(output['something']).to eq(...)
       end
     end
@@ -499,7 +501,7 @@ RSpec.describe 'onprem <name> connector' do
 
   describe 'methods.<method_name>' do
     it 'returns the expected value' do
-      expect(connector.methods.<method_name>(settings)).to eq(...)
+      expect(connector.methods.< method_name > (settings)).to eq(...)
     end
   end
 end
@@ -620,6 +622,33 @@ different spelling, use that.
 [Run an on-prem agent](https://docs.workato.com/on-prem/agents/run.html) for
 the per-platform specifics.)
 
+###### Pointing an arbitrary agent at an arbitrary workspace / root-CA bundle
+
+The two `bin/run.sh` flags below let any deployed agent dist talk to any
+Workato environment — useful for running one local install against preview,
+prod, or a custom datacenter without re-installing:
+
+```sh
+<AGENT_HOME>/bin/run.sh \
+    --workato-properties conf/workato.properties \
+    --cert 'conf/root_ca_preview.pem|conf/root_ca-v20240530-10y-preview.pem'
+```
+
+- **`--workato-properties <path>`** — points the agent at an alternative
+  `workato.properties` (gateway hosts, workspace id, activation keys, …).
+  Resolved relative to the agent's CWD; use an absolute path when starting
+  from elsewhere.
+- **`--cert '<pem>|<pem>|…'`** — pipe-separated list of root-CA PEM files
+  the agent should trust for the outbound mTLS tunnel. Quote the value so
+  the shell does not interpret the `|`. Multiple PEMs let you transition
+  from an expiring root to its replacement without downtime.
+
+The same two flags are what `DeployedAgentLauncher` auto-injects when it
+boots an agent in-process from a test. See
+[`../workato-agent-extension-test/README.md`](../workato-agent-extension-test/README.md)
+→ "Dist layouts and run modes" for the in-process variant and the layouts
+that trigger each behaviour.
+
 Quick sanity check — the agent should answer the mounted route:
 
 ```sh
@@ -697,7 +726,7 @@ field — the next test run picks it up.
 | `WebMock::NetConnectNotAllowedError`                                                                         | Spec hits a URL not covered by any cassette. Wrap the call in `VCR.use_cassette`, or add a cassette whose request `method`+`uri` matches.                                                                                  |
 | `VCR::Errors::UnhandledHTTPRequestError: An HTTP request has been made that VCR does not know how to handle` | Same as above — no cassette matches the request.                                                                                                                                                                           |
 | `Could not find 'bundler' (X.Y.Z) required by your Gemfile.lock`                                             | Gradle is calling the wrong `bundle` (system Ruby vs. project Ruby). Set `BUNDLE_BIN` to the right executable, or run `cd src/test/ruby/<name> && bundle install` once to let your Ruby manager pick up the right version. |
-| Tests pass locally but fail in CI                                                                            | Different Ruby version. Check `.tool-versions` is honoured and the CI gemset matches.                                                                                                                                      |
+| Tests pass locally but fail in CI                                                                            | Different Ruby version. The Gemfile's `ruby '~> 3.4.0'` directive is enforced by Bundler — make sure the CI runner's active Ruby satisfies it (e.g., `actions/setup-ruby@v1 with: ruby-version: 3.4`).                     |
 
 ## Deploying the connector to Workato
 

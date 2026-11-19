@@ -127,8 +127,10 @@ Mirrors OPA's `modules/version-catalog` pins:
 
 - Java 21 target; Gradle 9.9.1 (wrapper). Gradle must run on a supported JDK;
   the 9.x wrapper supports JDK 25+/26.
-- Ruby 3.4.5 (pinned via `.tool-versions` for asdf at the repo root). Only
-  the demo module uses Ruby — see
+- Ruby 3.4+ (enforced by the demo's `Gemfile` via `ruby '~> 3.4.0'` — the
+  repo does NOT ship a `.tool-versions` / `.ruby-version` file, so whichever
+  version manager you prefer, or system Ruby, works as long as the active
+  Ruby satisfies the constraint). Only the demo module uses Ruby — see
   [`workato-agent-extension-demo/CLAUDE.md`](workato-agent-extension-demo/CLAUDE.md)
   for connector conventions.
 
