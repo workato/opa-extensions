@@ -3,3 +3,72 @@ rootProject.name = 'workato-agent-extension'
 include 'workato-agent-extension-api'
 include 'workato-agent-extension-test'
 include 'workato-agent-extension-demo'
+
+// ---------------------------------------------------------------------------
+// Dependency-version management via `libs/workato-onprem-bom-0.1.0.xml`.
+//
+// The curated BOM source lives at `libs/workato-onprem-bom-0.1.0.xml` (plain
+// Maven-style <dependencyManagement> POM). To let Gradle consume it via
+// `platform('com.workato.agent:workato-agent-bom:0.1.0')`, we materialise it
+// into Maven-repo layout under `build/bom-repo/` here, before any module
+// build.gradle evaluates, and the root build.gradle exposes `build/bom-repo/`
+// as a maven { } repository. The `build/` tree is gitignored, so only the
+// curated source .xml ends up in version control.
+//
+// Two transformations happen on the way:
+//   1. GAV substitution — the source POM was published by Gradle without
+//      coordinates (empty <groupId>, "unspecified" <version>), so we rewrite
+//      them to the deployment coords.
+//   2. Versionless-import stripping — Gradle 9 silently rejects any BOM that
+//      contains a <dependency> with <scope>import</scope> but no <version>
+//      (3 such entries exist in the source: grpc-bom, protobuf-bom, guava-bom).
+//      Those would be fine in Maven inheriting from a parent POM, but this
+//      standalone BOM has no parent, so we drop them. No module in this
+//      workspace depends on grpc/protobuf/guava, so the loss is harmless.
+// ---------------------------------------------------------------------------
+def bomSource = file('libs/workato-onprem-bom-0.1.0.xml')
+def bomTarget = file('build/bom-repo/com/workato/agent/workato-agent-bom/0.1.0/workato-agent-bom-0.1.0.pom')
+if (!bomSource.isFile()) {
+    throw new GradleException("BOM source not found: ${bomSource}. See CLAUDE.md § Dependency management.")
+}
+if (!bomTarget.isFile() || bomTarget.lastModified() < bomSource.lastModified()) {
+    bomTarget.parentFile.mkdirs()
+
+    def lines = bomSource.readLines('UTF-8')
+    def out = new StringBuilder()
+    def i = 0
+    while (i < lines.size()) {
+        def line = lines[i]
+
+        // Dependency block — buffer until </dependency>, drop if it has no <version>.
+        if (line =~ /^\s*<dependency>\s*$/) {
+            def block = new StringBuilder()
+            def hasVersion = false
+            while (i < lines.size()) {
+                def l = lines[i]
+                block.append(l).append('\n')
+                if (l.contains('<version>')) hasVersion = true
+                if (l =~ /<\/dependency>/) {
+                    i++; break
+                }
+                i++
+            }
+            if (hasVersion) out.append(block)
+            continue
+        }
+
+        // GAV rewrite — only touches the project header, not nested <groupId> etc.
+        if (line =~ /^\s*<groupId>\s*<\/groupId>\s*$/) {
+            out.append(line.replace('<groupId></groupId>', '<groupId>com.workato.agent</groupId>')).append('\n')
+        } else if (line =~ /^\s*<artifactId>version-catalog<\/artifactId>\s*$/) {
+            out.append(line.replace('version-catalog', 'workato-agent-bom')).append('\n')
+        } else if (line =~ /^\s*<version>unspecified<\/version>\s*$/) {
+            out.append(line.replace('unspecified', '0.1.0')).append('\n')
+        } else {
+            out.append(line).append('\n')
+        }
+        i++
+    }
+    bomTarget.setText(out.toString(), 'UTF-8')
+    logger.lifecycle("Regenerated ${bomTarget.name} from ${bomSource.name}")
+}

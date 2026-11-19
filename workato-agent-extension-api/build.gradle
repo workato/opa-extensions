@@ -31,16 +31,22 @@ javadoc {
 }
 
 dependencies {
+    // All dependency versions are pinned by the workato-agent-bom at
+    // libs/com/workato/agent/workato-agent-bom/0.1.0/workato-agent-bom-0.1.0.pom.
+    // Declare GAV without versions — the BOM supplies them.
+    api platform('com.workato.agent:workato-agent-bom:0.1.0')
+    testImplementation platform('com.workato.agent:workato-agent-bom:0.1.0')
+
     // Jackson databind is used by AgentWebhookApiV1.WebhookResponse.as(Class<T>) to deserialize
     // the body of a recipe webhook response. compileOnly rather than api: the hosting Spring
     // environment always provides Jackson at runtime (every agent / extension context ships
     // Spring MVC, which pulls jackson-databind in), so we must not force it into customer JARs.
-    compileOnly "tools.jackson.core:jackson-databind:${jacksonVersion}"
+    compileOnly 'tools.jackson.core:jackson-databind'
 
-    testImplementation "org.junit.jupiter:junit-jupiter:${junitVersion}"
-    testImplementation "tools.jackson.core:jackson-databind:${jacksonVersion}"
-    testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:${junitVersion}"
-    testRuntimeOnly "org.junit.platform:junit-platform-launcher:${junitPlatformVersion}"
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'tools.jackson.core:jackson-databind'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 test {

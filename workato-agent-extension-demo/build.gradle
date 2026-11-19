@@ -11,11 +11,20 @@ configurations {
 }
 
 dependencies {
+    // All dependency versions are pinned by the workato-agent-bom at
+    // libs/com/workato/agent/workato-agent-bom/0.1.0/workato-agent-bom-0.1.0.pom.
+    // Declare GAV without versions — the BOM supplies them. The only exception
+    // (Apache HttpClient 4) is called out below.
+    def bom = platform('com.workato.agent:workato-agent-bom:0.1.0')
+    compileOnly bom
+    implementation bom
+    testImplementation bom
+
     // ---- Provided by the agent at runtime — compileOnly, NOT shaded ----
     //
     // extension-api is the API we compile against; the agent exposes it at
     // runtime. Shading it would cause classloader conflicts (see
-    // extension-api/README.md — "do not shade it into your JAR").
+    // ../workato-agent-extension-api/README.md — "do not shade it into your JAR").
     compileOnly project(':workato-agent-extension-api')
     testImplementation project(':workato-agent-extension-test')
 
@@ -23,32 +32,36 @@ dependencies {
     // provides all four stacks at runtime. We compile against them (every
     // extension uses @RestController / @Value / @JsonProperty / @Inject /
     // Logger), but packaging them would duplicate code the agent already has.
-    compileOnly "org.springframework:spring-context:${springVersion}"
-    compileOnly "org.springframework:spring-webmvc:${springVersion}"
+    compileOnly 'org.springframework:spring-context'
+    compileOnly 'org.springframework:spring-webmvc'
 
-    compileOnly "com.fasterxml.jackson.core:jackson-core:2.17.2"
-    compileOnly "com.fasterxml.jackson.core:jackson-databind:2.17.2"
+    // Jackson 2 — demos import `com.fasterxml.jackson.annotation.JsonProperty` (TimerExtension
+    // records). The agent runtime carries Jackson 2 alongside Jackson 3 for backward compat with
+    // customer DTOs built against the older namespace.
+    compileOnly 'com.fasterxml.jackson.core:jackson-annotations'
+    compileOnly 'com.fasterxml.jackson.core:jackson-databind'
 
-    compileOnly "jakarta.servlet:jakarta.servlet-api:${jakartaServletVersion}"
-    compileOnly "jakarta.inject:jakarta.inject-api:2.0.1"
+    compileOnly 'jakarta.servlet:jakarta.servlet-api'
+    compileOnly 'jakarta.inject:jakarta.inject-api'
 
-    compileOnly "org.slf4j:slf4j-api:${slf4jVersion}"
+    compileOnly 'org.slf4j:slf4j-api'
 
-    // Apache HttpClient 4 — the agent ships it as part of its own runtime, so
-    // NtlmExtension can import org.apache.http.* without us shading it in.
-    compileOnly "org.apache.httpcomponents:httpclient:4.5.14"
+    // Apache HttpClient 4 — the agent still ships 4.x for legacy connectors (NtlmExtension
+    // imports org.apache.http.*). The BOM pins only HttpClient 5; keep 4.x hardcoded until
+    // NtlmExtension is migrated.
+    compileOnly 'org.apache.httpcomponents:httpclient:4.5.14'
 
     // ---- Actually used by extension code — shaded into the fat jar ----
     //
     // Keep the comment next to each entry pointing at the one or two source
     // files that reference the library, so a future reader can confirm the
     // dependency is still needed before upgrading or dropping it.
-    implementation "commons-codec:commons-codec:1.15"                // SecurityExtension — Hex
-    implementation "org.apache.commons:commons-lang3:3.12.0"         // NtlmExtension, TimerExtension — StringUtils
+    implementation 'commons-codec:commons-codec'                // SecurityExtension — Hex
+    implementation 'org.apache.commons:commons-lang3'           // NtlmExtension, TimerExtension — StringUtils
 
-    testImplementation "org.springframework:spring-test:${springVersion}"
-    testImplementation "org.junit.jupiter:junit-jupiter:${junitVersion}"
-    testRuntimeOnly "org.junit.platform:junit-platform-launcher:${junitPlatformVersion}"
+    testImplementation 'org.springframework:spring-test'
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 test {

@@ -1,15 +1,22 @@
 // Root project — only shared configuration. Every module
 // (workato-agent-extension-api, workato-agent-extension-test,
 // workato-agent-extension-demo) lives in its own subdirectory with its own
-// build.gradle; this file sets Java version, repositories, and the shared
-// version constants every module reads from `project.ext`.
+// build.gradle. This file sets Java version, repositories, and nothing else
+// about dependency versions — every pin lives in the BOM authored at
+// `libs/workato-agent-bom-0.1.0.xml`; settings.gradle materialises it into
+// `build/bom-repo/` in Maven-repo layout, and modules import it via
+// `platform('com.workato.agent:workato-agent-bom:0.1.0')`.
 
 allprojects {
     group = 'com.workato.agent'
     version = '0.1.0'
 
     repositories {
-        mavenLocal()
+        // Local Maven-layout repo that serves the workato-agent-bom. Populated by
+        // settings.gradle at init time from libs/workato-agent-bom-0.1.0.xml.
+        maven {
+            url = rootProject.file('build/bom-repo').toURI()
+        }
         mavenCentral()
     }
 }
@@ -20,20 +27,6 @@ subprojects {
     java {
         sourceCompatibility = 21
         targetCompatibility = 21
-    }
-
-    // Shared dependency versions. Mirrors OPA's version-catalog pins so the
-    // runtime behaviour here matches the agent's exactly. Keep them here (not
-    // duplicated per module) so a bump stays local to this file.
-    ext {
-        springVersion = '7.0.9'
-        slf4jVersion = '2.0.18'
-        logbackVersion = '1.5.38'
-        jacksonVersion = '3.2.2'
-        jakartaServletVersion = '6.1.0'
-        junitVersion = '6.1.3'
-        junitPlatformVersion = '6.1.3'
-        assertjVersion = '3.27.7'
     }
 
     tasks.withType(JavaCompile).configureEach {

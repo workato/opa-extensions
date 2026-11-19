@@ -55,17 +55,30 @@ each with its own README explaining which API features it demonstrates.
   module uses Ruby — the sibling connector tests run via `bundle exec rspec`
   through Gradle.
 
-See [`CLAUDE.md`](CLAUDE.md) for the workspace-level toolchain notes and
-pinned dependency versions, and each module's own `CLAUDE.md` for
-maintainer-facing conventions.
+### Dependency versions
+
+Every third-party version is pinned by a single BOM at
+[`libs/workato-onprem-bom-0.1.0.xml`](libs/workato-onprem-bom-0.1.0.xml) and
+consumed by every module as
+`platform('com.workato.agent:workato-agent-bom:0.1.0')`. Module build files
+declare `group:name` without versions. To bump a library, edit the BOM and
+rebuild.
+
+See [`CLAUDE.md`](CLAUDE.md) § Dependency version management for the
+authoring workflow (GAV substitution, versionless-import stripping, Spring
+7 floor), and each module's own `CLAUDE.md` for maintainer-facing
+conventions.
 
 ## Repository layout
 
 ```
 ./
-├── build.gradle                       # Shared config + ext{} version pins
-├── settings.gradle                    # include 'workato-agent-extension-{api,test,demo}'
+├── build.gradle                       # Shared config + maven repo pointing at build/bom-repo
+├── settings.gradle                    # Module includes + BOM materialisation
 ├── CLAUDE.md                          # Workspace overview for Claude / maintainers
+├── libs/
+│   └── workato-onprem-bom-0.1.0.xml   # Single source of truth for dependency versions
+├── build/bom-repo/                    # Generated (gitignored) Maven layout serving the BOM
 ├── gradle/wrapper/                    # Gradle 9.9.1
 ├── workato-agent-extension-api/       # Published to Nexus (future)
 │   ├── README.md                      # ← customer-facing API guide

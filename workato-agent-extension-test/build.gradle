@@ -26,34 +26,40 @@ javadoc {
 }
 
 dependencies {
+    // All dependency versions are pinned by the workato-agent-bom at
+    // libs/com/workato/agent/workato-agent-bom/0.1.0/workato-agent-bom-0.1.0.pom.
+    // Declare GAV without versions — the BOM supplies them.
+    api platform('com.workato.agent:workato-agent-bom:0.1.0')
+    testImplementation platform('com.workato.agent:workato-agent-bom:0.1.0')
+
     // The public V1 API customers compile against — the only "agent-side" dep of this harness.
     api project(':workato-agent-extension-api')
 
     // Spring MVC + MockMvc provide the "mini agent" runtime the harness builds for each test.
-    api "org.springframework:spring-webmvc:${springVersion}"
-    api "org.springframework:spring-test:${springVersion}"
+    api 'org.springframework:spring-webmvc'
+    api 'org.springframework:spring-test'
 
     // MockMvc internally calls jakarta.servlet.* types — exposed via MvcResult.getResponse() to
     // customers writing assertions on the raw response.
-    api "jakarta.servlet:jakarta.servlet-api:${jakartaServletVersion}"
+    api 'jakarta.servlet:jakarta.servlet-api'
 
     // Jackson 3 — default message converter in Spring MVC, matching the agent's production behaviour.
-    api "tools.jackson.core:jackson-databind:${jacksonVersion}"
+    api 'tools.jackson.core:jackson-databind'
 
     // YAML support — the harness reads an extension's YAML section the same way the agent does.
-    api "tools.jackson.dataformat:jackson-dataformat-yaml:${jacksonVersion}"
+    api 'tools.jackson.dataformat:jackson-dataformat-yaml'
 
     // JUnit 5 is a required api dependency because the harness exposes a JUnit 5
     // BeforeAllCallback/AfterAllCallback for the @RegisterExtension integration path.
-    api "org.junit.jupiter:junit-jupiter-api:${junitVersion}"
+    api 'org.junit.jupiter:junit-jupiter-api'
 
-    api "org.slf4j:slf4j-api:${slf4jVersion}"
+    api 'org.slf4j:slf4j-api'
 
-    testImplementation "org.junit.jupiter:junit-jupiter:${junitVersion}"
-    testImplementation "org.assertj:assertj-core:${assertjVersion}"
-    testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:${junitVersion}"
-    testRuntimeOnly "org.junit.platform:junit-platform-launcher:${junitPlatformVersion}"
-    testRuntimeOnly "ch.qos.logback:logback-classic:${logbackVersion}"
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'org.assertj:assertj-core'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testRuntimeOnly 'ch.qos.logback:logback-classic'
 }
 
 test {

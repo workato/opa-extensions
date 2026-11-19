@@ -67,6 +67,30 @@ Verify after any dependency change: `./gradlew clean :workato-agent-extension-de
 org/springframework` must print `0`. If a Spring/Jackson/SLF4J class is in
 the jar you shaded something you shouldn't have.
 
+### Versions come from the BOM — do NOT inline them
+
+Every GAV you declare in this module's `dependencies { }` goes in without a
+version suffix. Versions flow from the workspace BOM imported at the top of
+the block:
+
+```groovy
+def bom = platform('com.workato.agent:workato-agent-bom:0.1.0')
+compileOnly bom
+implementation bom
+testImplementation bom
+```
+
+The BOM source is `../libs/workato-onprem-bom-0.1.0.xml`; the workspace
+regenerates a Gradle-consumable `.pom` at build/bom-repo/ on every build.
+See [`../CLAUDE.md`](../CLAUDE.md) § Dependency version management for the
+authoring workflow, the versionless-import-stripping transformation, and how
+to bump a version.
+
+The one deliberate exception is **Apache HttpClient 4.5.14** — the BOM pins
+only HttpClient 5, and `NtlmExtension` still uses HttpClient 4, so this one
+dependency keeps an inline version with a comment pointing at the reason.
+Everything else must stay versionless.
+
 ## Workato custom connectors (Ruby)
 
 Each extension has a companion Workato custom connector (a Ruby
