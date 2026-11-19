@@ -13,7 +13,7 @@ like a normal Workato connector action from the recipe editor.
 
 | Module                                                                        | Who uses it                                                       | What's in it                                                                                                                                                                                           |
 |-------------------------------------------------------------------------------|-------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **[`workato-agent-extension-api/`](workato-agent-extension-api/README.md)**   | Customers writing an extension.                                   | The public API your `@RestController` compiles against (`AgentExtensionApiV1`, `AgentExtensionContextV1`, `AgentWebhookApiV1`). The agent provides the implementation at runtime.                      |
+| **[`workato-agent-extension-api/`](workato-agent-extension-api/README.md)**   | Customers writing an extension.                                   | The public API your `@RestController` compiles against (`AgentExtensionV1`, `AgentExtensionContextV1`, `AgentWebhookV1`). The agent provides the implementation at runtime.                            |
 | **[`workato-agent-extension-test/`](workato-agent-extension-test/README.md)** | Customers testing an extension.                                   | Two complementary harnesses: `AgentExtensionHarness` (fast in-memory `MockMvc` runtime, no agent needed) and `DeployedAgentLauncher` (runs the real agent in-process against a deployed dist on disk). |
 | **[`workato-agent-extension-demo/`](workato-agent-extension-demo/README.md)** | Anyone looking for a worked example — or evolving the API itself. | Three reference extensions (`security`, `ntlm`, `timer`) plus their Workato custom connectors (Ruby), JUnit tests, and VCR cassettes. Exercises every pattern the API and the harness expose.          |
 
@@ -27,7 +27,7 @@ reference customers can clone from.
 1. Take a dependency on `workato-agent-extension-api` (compile-only; the
    agent provides it at runtime) and on `workato-agent-extension-test`
    (test-only).
-2. Write a Spring `@RestController`. Inject `AgentExtensionApiV1` to read the
+2. Write a Spring `@RestController`. Inject `AgentExtensionV1` to read the
    endpoint's YAML configuration and (optionally) send webhooks back to a
    Workato recipe. See [`workato-agent-extension-api/README.md`](workato-agent-extension-api/README.md)
    for the complete API reference and allowed-packages rules.

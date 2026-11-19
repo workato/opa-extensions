@@ -8,11 +8,11 @@ custom connector. Per-extension documentation (what it does, what Extension
 API features it demonstrates, HTTP endpoints, YAML keys it reads) lives next
 to its Java class — follow the links.
 
-| Extension                                                             | What it demonstrates                                                                                                                                                                                                                        | HTTP surface                                                            |
-|-----------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
-| **[security](src/main/java/com/mycompany/onprem/security/README.md)** | The minimum-viable extension — `@Inject AgentExtensionApiV1`, YAML read via `getProfileConfiguration()`, one `@PostMapping` endpoint.                                                                                                       | `POST /computeDigest`                                                   |
-| **[ntlm](src/main/java/com/mycompany/onprem/ntlm/README.md)**         | `@Value("${…}")` property injection with defaults, lazy-init of a shared `HttpClient` (DCL pattern), `@RequestHeader`-driven inputs, forwarding upstream status via `HttpServletResponse`.                                                  | `POST /request`                                                         |
-| **[timer](src/main/java/com/mycompany/onprem/timer/README.md)**       | **`AgentWebhookApiV1.send(...)`** with per-profile retry policy, `webhook_subscribe` / `_unsubscribe` HTTP contract, Jackson records with `@JsonProperty`, background `ScheduledExecutorService` with `DisposableBean.destroy()` lifecycle. | `GET /webhook/health`, `POST /webhook/{subscribe,unsubscribe,fire_now}` |
+| Extension                                                             | What it demonstrates                                                                                                                                                                                                                     | HTTP surface                                                            |
+|-----------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
+| **[security](src/main/java/com/mycompany/onprem/security/README.md)** | The minimum-viable extension — `@Inject AgentExtensionV1`, YAML read via `getProfileConfiguration()`, one `@PostMapping` endpoint.                                                                                                       | `POST /computeDigest`                                                   |
+| **[ntlm](src/main/java/com/mycompany/onprem/ntlm/README.md)**         | `@Value("${…}")` property injection with defaults, lazy-init of a shared `HttpClient` (DCL pattern), `@RequestHeader`-driven inputs, forwarding upstream status via `HttpServletResponse`.                                               | `POST /request`                                                         |
+| **[timer](src/main/java/com/mycompany/onprem/timer/README.md)**       | **`AgentWebhookV1.send(...)`** with per-profile retry policy, `webhook_subscribe` / `_unsubscribe` HTTP contract, Jackson records with `@JsonProperty`, background `ScheduledExecutorService` with `DisposableBean.destroy()` lifecycle. | `GET /webhook/health`, `POST /webhook/{subscribe,unsubscribe,fire_now}` |
 
 Add a new extension by cloning any of the three subdirectories under
 `src/main/java/com/mycompany/onprem/` and following the six-step **Development
@@ -27,7 +27,7 @@ Extension mechanism is enabled by adding the `extensions` section to the config 
       classpath: C:\\Program Files\\Workato Agent\\ext
     extensions:
       security:
-        controllerClass: com.mycompany.onprem.security.SecurityExtension
+        controllerClass: com.workato.agent.extension.demo.security.SecurityExtension
         secret: HA63A3043AMMMM
 ```
 
@@ -114,7 +114,7 @@ harness wires your controller into a hermetic Spring `MockMvc` context — no
 Jetty, no classloader isolation, no network. It takes milliseconds and runs
 on every `./gradlew test`.
 
-Covers: `@Autowired AgentExtensionApiV1`, `@Value("${…}")` injection with the
+Covers: `@Autowired AgentExtensionV1`, `@Value("${…}")` injection with the
 agent's dot-literal semantics, `/ext/{profile}/*` routing, `@PathVariable` /
 `@RequestBody`, your `@ControllerAdvice` beans. Does *not* cover: Jetty
 specifics, classloader isolation from `lib_ext/`, mTLS tunnel. Full DSL +
@@ -293,7 +293,7 @@ Useful standalone Gradle tasks:
 ```yml
     extensions:
       security:
-        controllerClass: com.mycompany.onprem.security.SecurityExtension
+        controllerClass: com.workato.agent.extension.demo.security.SecurityExtension
         secret: HA63A3043AMMMM
 ```
 
@@ -310,13 +310,13 @@ anything that contradicts the generated reference, trust the reference.
 
 ### Running
 
-| Command                                                                                                                   | What runs                                                           |
-|---------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `./gradlew test`                                                                                                          | Java JUnit **and** Ruby RSpec suites (per-test output for both).    |
-| `./gradlew :test`                                                                                                         | Java only.                                                          |
-| `./gradlew :test --tests '*Ntlm*'`                                                                                        | Only tests whose fully-qualified name matches the pattern.          |
-| `./gradlew :test --tests 'com.mycompany.onprem.security.SecurityExtensionTest.computesExpectedSha256OfSecretThenPayload'` | One specific test method.                                           |
-| `./gradlew :test --rerun-tasks`                                                                                           | Force re-run even if nothing changed (useful when a test is flaky). |
+| Command                                                                                                                               | What runs                                                           |
+|---------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `./gradlew test`                                                                                                                      | Java JUnit **and** Ruby RSpec suites (per-test output for both).    |
+| `./gradlew :test`                                                                                                                     | Java only.                                                          |
+| `./gradlew :test --tests '*Ntlm*'`                                                                                                    | Only tests whose fully-qualified name matches the pattern.          |
+| `./gradlew :test --tests 'com.workato.agent.extension.demo.security.SecurityExtensionTest.computesExpectedSha256OfSecretThenPayload'` | One specific test method.                                           |
+| `./gradlew :test --rerun-tasks`                                                                                                       | Force re-run even if nothing changed (useful when a test is flaky). |
 
 Per-test output (`PASSED`/`FAILED`/`SKIPPED`) is enabled via `testLogging` in
 `build.gradle`.
@@ -360,7 +360,7 @@ Rules of thumb:
 
 - **Never hand-roll a mock of the Extension API.** Use
   `AgentExtensionHarness`. The harness provides the real
-  `AgentExtensionApiV1`, honours `@Value("${...}")` and
+  `AgentExtensionV1`, honours `@Value("${...}")` and
   `getProfileConfiguration()` with the same semantics as the agent, and
   mounts the controller behind `/ext/{profile}/*` so request paths match
   production.
@@ -595,10 +595,10 @@ server:
   classpath: <AGENT_HOME>/ext
 extensions:
   security:
-    controllerClass: com.mycompany.onprem.security.SecurityExtension
+    controllerClass: com.workato.agent.extension.demo.security.SecurityExtension
     secret: a-local-test-secret
   ntlm:
-    controllerClass: com.mycompany.onprem.ntlm.NtlmExtension
+    controllerClass: com.workato.agent.extension.demo.ntlm.NtlmExtension
     # connect-timeout-ms / read-timeout-ms can be set here too
 ```
 
@@ -657,7 +657,7 @@ rm src/test/resources/tape_library/<name>/<cassette_name>.yml
 
 ```ruby
 # src/test/ruby/<name>/spec/spec_helper.rb — temporarily
-c.default_cassette_options = { record: :once }   # was :none
+c.default_cassette_options = { record: :once } # was :none
 ```
 
 ```sh

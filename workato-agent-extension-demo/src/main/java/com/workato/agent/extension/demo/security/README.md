@@ -12,7 +12,7 @@ answers one `POST`. Everything else in the project is built on this skeleton.
 
 | Feature                                                 | How                                                                                                                                                                                                                      |
 |---------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Autowiring `AgentExtensionApiV1`                        | `@Inject AgentExtensionApiV1 agent;` — jakarta.inject form, equivalent to Spring `@Autowired`.                                                                                                                           |
+| Autowiring `AgentExtensionV1`                           | `@Inject AgentExtensionV1 agent;` — jakarta.inject form, equivalent to Spring `@Autowired`.                                                                                                                              |
 | `AgentExtensionContextV1.getProfileName()`              | Used as a prefix in every log line so multi-profile agents are debuggable.                                                                                                                                               |
 | `AgentExtensionContextV1.getProfileConfiguration()`     | Reads the `signing-secret` key out of the profile's YAML map at request time.                                                                                                                                            |
 | YAML → config read via the context (not `@Value`)       | A deliberate choice — shows the `Map<String, Object>` view, including the subtle gotcha that `secret` as a key name is reserved by the agent's `SecretsPreprocessor` and must be avoided (see the comment in the class). |
@@ -23,7 +23,7 @@ Not demonstrated here (see other extensions):
 
 - `@Value("${…}")` property injection → **NtlmExtension**.
 - Lazy init of a shared resource via double-check locking → **NtlmExtension**.
-- Outbound HTTP via `AgentWebhookApiV1.send(...)` → **TimerExtension**.
+- Outbound HTTP via `AgentWebhookV1.send(...)` → **TimerExtension**.
 - Background scheduler + `DisposableBean.destroy()` lifecycle → **TimerExtension**.
 
 ## HTTP endpoint
@@ -49,7 +49,7 @@ Content-Type: application/json
 ```yaml
 extensions:
   security:
-    controller: com.mycompany.onprem.security.SecurityExtension
+    controller: com.workato.agent.extension.demo.security.SecurityExtension
     signing-secret: <any string>
 ```
 

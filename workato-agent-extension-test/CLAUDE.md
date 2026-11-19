@@ -36,7 +36,7 @@ module:
    Requires `agent-core`, `agent-launcher`, a real `Application` context, Jetty
    on a free port, and the full agent dep closure. Fine for maintainers; absurd
    for a customer who just wants to test their 300-line extension.
-2. **Hand-rolled fakes** — customer implements `AgentExtensionApiV1` themselves,
+2. **Hand-rolled fakes** — customer implements `AgentExtensionV1` themselves,
    wires up Spring MVC manually, duplicates `EndpointPropertySource` semantics
    by guesswork. Fragile, drifts from production, and silently miscovers edge
    cases (dotted keys, unmodifiable contract, servlet-path mapping).
@@ -75,13 +75,13 @@ compile classpath, which is what keeps the invariant above tight.
 
 ## Public API Surface
 
-Two public classes — `AgentExtensionHarness` and `FakeAgentWebhookApiV1`. Everything else
-(`FakeAgentExtensionApi`, `EndpointPropertySource`, `ControllerMethodResolver`) is
+Two public classes — `AgentExtensionHarness` and `FakeAgentWebhookV1`. Everything else
+(`FakeAgentExtension`, `EndpointPropertySource`, `ControllerMethodResolver`) is
 package-private.
 
-`FakeAgentWebhookApiV1` is public because customer tests sometimes want to build it standalone
+`FakeAgentWebhookV1` is public because customer tests sometimes want to build it standalone
 (unit tests that construct a controller by hand rather than through the harness). The harness
-owns one by default and exposes it through `AgentExtensionHarness.webhookApi()`.
+owns one by default and exposes it through `AgentExtensionHarness.webhook()`.
 
 ```java
 public final class AgentExtensionHarness
@@ -105,7 +105,7 @@ public final class AgentExtensionHarness
 
     public AgentExtensionHarness parentContext(ApplicationContext parentContext);
 
-    public AgentExtensionHarness webhookApi(FakeAgentWebhookApiV1 webhookApi);   // optional pre-built fake
+    public AgentExtensionHarness webhook(FakeAgentWebhookV1 webhook);   // optional pre-built fake
 
     // Lifecycle (manual; JUnit 5 wires these automatically)
     public AgentExtensionHarness start();
@@ -115,9 +115,9 @@ public final class AgentExtensionHarness
     // Accessors
     public MockMvc mockMvc();
 
-    public AgentExtensionApiV1 agentExtensionApi();
+    public AgentExtensionV1 agentExtension();
 
-    public FakeAgentWebhookApiV1 webhookApi();   // the fake the controller sees via getWebhookApi()
+    public FakeAgentWebhookV1 webhook();   // the fake the controller sees via webhook()
 
     public AnnotationConfigWebApplicationContext webApplicationContext();
 
@@ -211,10 +211,10 @@ or the suffix is a breaking change for them.
 
 ### 4. `AgentConfiguration` is unmodifiable in the harness too
 
-`FakeAgentExtensionApi.unmodifiable(...)` wraps the properties in
+`FakeAgentExtension.unmodifiable(...)` wraps the properties in
 `Collections.unmodifiableMap(new LinkedHashMap<>(src))` and exposes the view
 via an `AbstractMap`-based `AgentConfiguration`. Identical to the production
-`AgentExtensionApiV1Impl.UnmodifiableConfiguration`.
+`AgentExtensionV1Impl.UnmodifiableConfiguration`.
 
 Why not just return a `LinkedHashMap`? Because a customer whose controller
 accidentally mutates the configuration (`cfg.put(...)`) would see the test
@@ -321,7 +321,7 @@ re-register each one via `.bean(...)` / `.configuration(...)`.
 
 Child-shadows-parent is the standard Spring semantics: if the child context
 registers a bean with the same name as a parent bean, lookups by that name
-hit the child. This matters for `"agentExtensionApi"` — the harness always
+hit the child. This matters for `"agentExtension"` — the harness always
 registers its own and must not inadvertently resolve a parent bean of the
 same name.
 
@@ -394,9 +394,9 @@ the harness is involved.
 Mutually exclusive: calling both throws `IllegalStateException`. One
 controller per harness instance.
 
-## `FakeAgentWebhookApiV1` — scripted fake for the webhook API
+## `FakeAgentWebhookV1` — scripted fake for the webhook API
 
-Implements `AgentWebhookApiV1` with:
+Implements `AgentWebhookV1` with:
 
 - **Call log** — every HTTP attempt lands in `allCalls()` / `callsFor(url)` / `callsOfKind(kind)`
   / `lastCall()`, so tests assert on observed behaviour instead of mocking method calls.
@@ -411,15 +411,15 @@ Implements `AgentWebhookApiV1` with:
   registered one. Pattern: a shared `@BeforeEach` registers a broad default; individual
   `@Test`s override with narrower stubs.
 
-The harness holds exactly one fake per test instance, exposed as `harness.webhookApi()`. Tests
-clean state with `harness.webhookApi().reset()` in a `@BeforeEach` when the harness is
+The harness holds exactly one fake per test instance, exposed as `harness.webhook()`. Tests
+clean state with `harness.webhook().reset()` in a `@BeforeEach` when the harness is
 class-level (static field).
 
 ### Fidelity invariant
 
-Any change to `AgentWebhookApiV1Impl` (production, agent-core) that observably alters behaviour
+Any change to `AgentWebhookV1Impl` (production, agent-core) that observably alters behaviour
 — new retry trigger, different exhaustion semantics, response truncation off-by-one, headers
-contract — must be mirrored in `FakeAgentWebhookApiV1`. The invariant is kept executable by
+contract — must be mirrored in `FakeAgentWebhookV1`. The invariant is kept executable by
 `WebhookApiProductionParityTest` in `modules/agent-launcher/src/test/java/.../extension/`:
 one parametrised test that runs each scenario against both impls and asserts identical
 observables. A silent drift between the two is a CI failure, not a subtle production bug.
@@ -740,8 +740,8 @@ modules/extension-test/
         com/workato/agent/extension/test/
             AgentExtensionHarness.java                       (public API — in-memory MockMvc harness)
             DeployedAgentLauncher.java                       (public API — in-process real-agent launcher)
-            FakeAgentWebhookApiV1.java                       (public API — scripted fake for the webhook API)
-            FakeAgentExtensionApi.java                       (impl of AgentExtensionApiV1 for the harness)
+            FakeAgentWebhookV1.java                       (public API — scripted fake for the webhook API)
+            FakeAgentExtension.java                       (impl of AgentExtensionV1 for the harness)
             EndpointPropertySource.java                      (impl of @Value lookup)
             ControllerMethodResolver.java                    (SerializedLambda → path + HTTP method; shared)
     src/test/java/
@@ -752,8 +752,8 @@ modules/extension-test/
             DeployedAgentLauncherIntegrationTest.java        (end-to-end tests; @Disabled by default)
             testext/
                 {Controller}.java                            (one top-level controller per scenario)
-                PortableEchoController.java                  (OPA 33 — no AgentExtensionApiV1 dependency)
-                EchoController.java                          (OPA 34 — autowires AgentExtensionApiV1)
+                PortableEchoController.java                  (OPA 33 — no AgentExtensionV1 dependency)
+                EchoController.java                          (OPA 34 — autowires AgentExtensionV1)
                 Translator.java, TranslatorConfig.java       (shared collaborators)
     src/test/resources/extensions/
         {profile}.yml                                        (one YAML fixture per scenario)

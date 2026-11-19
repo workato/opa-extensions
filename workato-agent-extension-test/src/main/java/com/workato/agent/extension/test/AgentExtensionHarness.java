@@ -3,7 +3,7 @@
  */
 package com.workato.agent.extension.test;
 
-import com.workato.agent.extension.api.AgentExtensionApiV1;
+import com.workato.agent.extension.api.AgentExtensionV1;
 import org.junit.jupiter.api.extension.*;
 import org.springframework.beans.factory.annotation.AnnotatedGenericBeanDefinition;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
@@ -38,7 +38,7 @@ import java.util.Map;
  * <ul>
  *   <li>An {@link AnnotationConfigWebApplicationContext} is created per harness instance. Into it
  *       the harness registers (a) the customer's {@code @RestController}, (b) the
- *       {@code "agentExtensionApi"} singleton (the V1 API fake), and (c) any user-supplied beans
+ *       {@code "agentExtension"} singleton (the V1 API fake), and (c) any user-supplied beans
  *       / configuration classes.</li>
  *   <li>An {@link EndpointPropertySource} is added as the first PropertySource in the
  *       {@code Environment}, so {@code @Value("${key}")} on the controller resolves against the
@@ -96,7 +96,7 @@ public final class AgentExtensionHarness
     private Class<?> controllerClass;
     private Object controllerInstance;
     private ApplicationContext parentContext;
-    private FakeAgentWebhookApiV1 webhookApi;
+    private FakeAgentWebhookV1 webhook;
 
     private AnnotationConfigWebApplicationContext webContext;
     private MockMvc mockMvc;
@@ -169,7 +169,7 @@ public final class AgentExtensionHarness
     /**
      * Register a pre-built controller instance — the harness uses it as-is without Spring
      * autowiring; customer code is responsible for setting any dependencies. The
-     * {@code "agentExtensionApi"} bean is still exposed via {@link #agentExtensionApi()} so the test
+     * {@code "agentExtension"} bean is still exposed via {@link #agentExtension()} so the test
      * can wire it manually. Mutually exclusive with {@link #controller(Class)}.
      */
     public AgentExtensionHarness controller(Object controllerInstance) {
@@ -180,7 +180,7 @@ public final class AgentExtensionHarness
 
     /**
      * Add a key/value to the extension's YAML section view. Available via
-     * {@code AgentExtensionApiV1.getContext().getProfileConfiguration()} and via
+     * {@code AgentExtensionV1.getContext().getProfileConfiguration()} and via
      * {@code @Value("${key}")} on the controller. Dots in keys are literal (no nesting).
      */
     public AgentExtensionHarness property(String key, Object value) {
@@ -193,7 +193,7 @@ public final class AgentExtensionHarness
      * production {@code config.yml} layout. The resource must contain an {@code extensions:}
      * section with an entry whose key equals this harness's profile name — the entry's children
      * become the extension's properties, available via {@code @Value("${key}")} and via
-     * {@code AgentExtensionApiV1.getContext().getProfileConfiguration()}.
+     * {@code AgentExtensionV1.getContext().getProfileConfiguration()}.
      *
      * <p>Example YAML:
      * <pre>{@code
@@ -264,7 +264,7 @@ public final class AgentExtensionHarness
      * {@code @ContextConfiguration} setup — becomes autowire-visible to the controller, so a
      * test does not have to re-register each stub via {@link #bean(String, Object)}.
      *
-     * <p>Precedence: child beans (the controller, {@code "agentExtensionApi"}, and anything added via
+     * <p>Precedence: child beans (the controller, {@code "agentExtension"}, and anything added via
      * {@link #bean(String, Object)} / {@link #configuration(Class)}) win over same-named parent
      * beans — standard Spring child-context semantics.
      *
@@ -296,17 +296,17 @@ public final class AgentExtensionHarness
     }
 
     /**
-     * Supply a pre-built {@link FakeAgentWebhookApiV1} the controller will see through
-     * {@code agent.getWebhookApi()}. Useful when the test wants to pre-load stubs or share the
+     * Supply a pre-built {@link FakeAgentWebhookV1} the controller will see through
+     * {@code agent.webhook()}. Useful when the test wants to pre-load stubs or share the
      * fake across several harness instances. If this method is not called, {@link #start()}
-     * creates a fresh {@link FakeAgentWebhookApiV1} with no stubs — the default behaviour of
+     * creates a fresh {@link FakeAgentWebhookV1} with no stubs — the default behaviour of
      * every {@code send} / {@code wakeup} is to return {@code 200 "{}"} on the first attempt.
      */
-    public AgentExtensionHarness webhookApi(FakeAgentWebhookApiV1 webhookApi) {
-        if (webhookApi == null) {
-            throw new IllegalArgumentException("webhookApi must not be null");
+    public AgentExtensionHarness webhook(FakeAgentWebhookV1 webhook) {
+        if (webhook == null) {
+            throw new IllegalArgumentException("webhook must not be null");
         }
-        this.webhookApi = webhookApi;
+        this.webhook = webhook;
         return this;
     }
 
@@ -330,8 +330,8 @@ public final class AgentExtensionHarness
                     "A controller must be available — call .controller(Class|Object), or load a YAML " +
                             "whose extensions." + profileName + " section carries a 'controller' / 'controllerClass' key");
         }
-        if (webhookApi == null) {
-            webhookApi = new FakeAgentWebhookApiV1();
+        if (webhook == null) {
+            webhook = new FakeAgentWebhookV1();
         }
 
         AnnotationConfigWebApplicationContext ctx = new AnnotationConfigWebApplicationContext();
@@ -384,21 +384,21 @@ public final class AgentExtensionHarness
     }
 
     /**
-     * The {@link AgentExtensionApiV1} instance seen by the controller — exposed for assertions.
+     * The {@link AgentExtensionV1} instance seen by the controller — exposed for assertions.
      */
-    public AgentExtensionApiV1 agentExtensionApi() {
+    public AgentExtensionV1 agentExtension() {
         ensureStarted();
-        return webContext.getBean("agentExtensionApi", AgentExtensionApiV1.class);
+        return webContext.getBean("agentExtension", AgentExtensionV1.class);
     }
 
     /**
-     * The {@link FakeAgentWebhookApiV1} the controller receives through
-     * {@code agent.getWebhookApi()} — exposed for stubbing responses and asserting against the
+     * The {@link FakeAgentWebhookV1} the controller receives through
+     * {@code agent.webhook()} — exposed for stubbing responses and asserting against the
      * captured call log without an unchecked cast.
      */
-    public FakeAgentWebhookApiV1 webhookApi() {
+    public FakeAgentWebhookV1 webhook() {
         ensureStarted();
-        return webhookApi;
+        return webhook;
     }
 
     /**
@@ -629,7 +629,7 @@ public final class AgentExtensionHarness
 
     /**
      * Registers the per-endpoint beans every extension's context needs: the controller (by class
-     * or by instance), the {@code "agentExtensionApi"} singleton, plus any extra beans supplied via
+     * or by instance), the {@code "agentExtension"} singleton, plus any extra beans supplied via
      * {@link #bean(String, Object)}. Mirrors the agent's own {@code EndpointBeanRegistrar} in shape.
      */
     private final class HarnessBeanRegistrar implements BeanDefinitionRegistryPostProcessor {
@@ -643,8 +643,8 @@ public final class AgentExtensionHarness
 
         @Override
         public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) {
-            beanFactory.registerSingleton("agentExtensionApi",
-                    new FakeAgentExtensionApi(profileName, properties, webhookApi));
+            beanFactory.registerSingleton("agentExtension",
+                    new FakeAgentExtension(profileName, properties, webhook));
             if (controllerInstance != null) {
                 beanFactory.registerSingleton("controller", controllerInstance);
             }

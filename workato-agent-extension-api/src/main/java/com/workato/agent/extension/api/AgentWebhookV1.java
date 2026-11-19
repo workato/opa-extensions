@@ -19,14 +19,14 @@ import java.util.function.Predicate;
  *
  * <p>A thin wrapper over {@code POST} with automatic retry and exponential backoff — the single
  * outbound-HTTP primitive extensions use when they need to push an event to a recipe webhook URL
- * or wake a recipe trigger. Obtained from {@link AgentExtensionApiV1#getWebhookApi()}.
+ * or wake a recipe trigger. Obtained from {@link AgentExtensionV1#webhook()}.
  *
  * <p>All API vocabulary — {@link WebhookResponse}, {@link RetryPolicy},
  * {@link WebhookDeliveryException}, {@link WebhookResponseException} — is declared as nested types
  * on this interface, so a single import brings in everything the extension needs:
- * <pre>{@code import com.workato.agent.extension.api.AgentWebhookApiV1;
- * import com.workato.agent.extension.api.AgentWebhookApiV1.WebhookResponse;
- * import com.workato.agent.extension.api.AgentWebhookApiV1.RetryPolicy;}</pre>
+ * <pre>{@code import com.workato.agent.extension.api.AgentWebhookV1;
+ * import com.workato.agent.extension.api.AgentWebhookV1.WebhookResponse;
+ * import com.workato.agent.extension.api.AgentWebhookV1.RetryPolicy;}</pre>
  *
  * <h2>send ladder</h2>
  * Four overloads, from the simplest to the most expressive — pick the one that carries exactly
@@ -78,7 +78,7 @@ import java.util.function.Predicate;
  * {@link RetryPolicy#withAttempts(int)} / {@link RetryPolicy#withTimeout(Duration)} /
  * {@link RetryPolicy#withJitter(double)}.
  */
-public interface AgentWebhookApiV1 {
+public interface AgentWebhookV1 {
 
     // =========================================================================================
     // send: deliver JSON payload (ladder from simplest to most expressive)

@@ -1,6 +1,6 @@
-package com.mycompany.onprem.ntlm;
+package com.workato.agent.extension.demo.ntlm;
 
-import com.workato.agent.extension.api.AgentExtensionApiV1;
+import com.workato.agent.extension.api.AgentExtensionV1;
 import jakarta.servlet.http.HttpServletResponse;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.http.HttpEntity;
@@ -42,7 +42,7 @@ public class NtlmExtension {
     private static final String HEADER_WORKATO_AUTH = "X-Workato-NTLM-auth";
 
     @Autowired
-    private AgentExtensionApiV1 agent;
+    private AgentExtensionV1 agent;
 
     @Value("${connect-timeout-ms:5000}")
     private int connectTimeoutMs;

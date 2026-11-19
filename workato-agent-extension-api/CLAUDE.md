@@ -24,8 +24,8 @@ Public API that customer-developed agent extensions compile against.
 > - the **Troubleshooting** table if a new failure mode becomes customer-visible;
 > - the **Versioning** section when introducing a `V2` or a removal window.
 >
-> A PR that touches `AgentExtensionApiV1`, `AgentExtensionContextV1` (including its nested
-> `AgentConfiguration`), `AgentWebhookApiV1` (including its nested
+> A PR that touches `AgentExtensionV1`, `AgentExtensionContextV1` (including its nested
+> `AgentConfiguration`), `AgentWebhookV1` (including its nested
 > `WebhookResponse` / `RetryPolicy` / `WebhookDeliveryException` /
 > `WebhookResponseException`), or `package-info.java` without touching README.md is
 > almost certainly incomplete.
@@ -33,19 +33,19 @@ Public API that customer-developed agent extensions compile against.
 > **Keep `extension-test` in sync.** The `extension-test` module ships the
 > customer-facing fakes/harness that mock this API without the agent. Every change
 > here must be mirrored there in the same PR. Behavioural changes to
-> `AgentWebhookApiV1` additionally require updating the executable paritet suite
+> `AgentWebhookV1` additionally require updating the executable paritet suite
 > `WebhookApiProductionParityTest` in `modules/agent-launcher/src/test/java/com/workato/agent/extension/`
-> — the test is the guarantee that `FakeAgentWebhookApiV1` and the production
-> `AgentWebhookApiV1Impl` stay observably identical. A silent drift between them
+> — the test is the guarantee that `FakeAgentWebhookV1` and the production
+> `AgentWebhookV1Impl` stay observably identical. A silent drift between them
 > would mean extensions pass harness tests and fail production (or the reverse):
 >
-> - **Mock implementations.** `extension-test/.../FakeAgentExtensionApi.java`
+> - **Mock implementations.** `extension-test/.../FakeAgentExtension.java`
     > (and any sibling fakes) must implement the new / renamed method, honour
     > the new contract (e.g., unmodifiable guarantees), and expose the new
     > return type. A new interface in this package requires a new fake class
     > there.
 > - **Harness surface.** If a new type becomes autowire-visible to extensions
-    > (another `"agentExtensionApi"`-style bean, say), `AgentExtensionHarness` must
+    > (another `"agentExtension"`-style bean, say), `AgentExtensionHarness` must
     > register it so customer tests see the same bean graph the production
     > `EndpointBeanRegistrar` wires up.
 > - **Fake-contract tests.** `extension-test/src/test/java/.../*Test.java`
@@ -58,7 +58,7 @@ Public API that customer-developed agent extensions compile against.
     > `extension-test/.../CLAUDE.md` (maintainer) must reflect the API delta
     > in their "API Reference" / "Load-bearing design decisions" sections.
 >
-> A PR that extends `AgentExtensionApiV1` with a new method but leaves
+> A PR that extends `AgentExtensionV1` with a new method but leaves
 > `extension-test` untouched will silently drift — customer tests continue to
 > compile against the old fake until a customer notices in the field.
 
@@ -77,7 +77,7 @@ genuinely needed, but should be kept minimal — every dependency added here is 
 dependency every customer JAR inherits.
 
 Current state: zero *mandatory agent-side* runtime dependencies. **Jackson databind** is a
-`compileOnly` dependency used by `AgentWebhookApiV1.WebhookResponse.as(Class<T>)` and is assumed
+`compileOnly` dependency used by `AgentWebhookV1.WebhookResponse.as(Class<T>)` and is assumed
 to be provided by the hosting Spring environment (which it always is in a Workato extension
 context — Spring MVC pulls it in). Extensions must not shade Jackson in their JARs.
 
@@ -88,7 +88,7 @@ existing extension JAR classloader.
 
 ## API Surface (V1)
 
-Four interfaces plus the four nested types inside `AgentWebhookApiV1`, all under
+Four interfaces plus the four nested types inside `AgentWebhookV1`, all under
 `com.workato.agent.extension.api`. The implementation is supplied by `agent-core` and registered
 per-endpoint by `EndpointBeanRegistrar`; customer controllers obtain it via Spring injection:
 
@@ -97,30 +97,30 @@ per-endpoint by `EndpointBeanRegistrar`; customer controllers obtain it via Spri
 @RestController
 public class MyController {
     @Autowired
-    AgentExtensionApiV1 agent;    // the entry point
+    AgentExtensionV1 agent;    // the entry point
 }
 ```
 
-### `AgentExtensionApiV1` — entry point
+### `AgentExtensionV1` — entry point
 
 The bean customer controllers `@Autowired`. One instance per extension (lives in
 each extension's isolated Spring context), so `getContext()` always reflects the
 endpoint owning the current request.
 
 ```java
-public interface AgentExtensionApiV1 {
+public interface AgentExtensionV1 {
     AgentExtensionContextV1 getContext();
-    AgentWebhookApiV1 getWebhookApi();          // NEW in V1
+    AgentWebhookV1 webhook();          // NEW in V1
 }
 ```
 
-Bean name: `"agentExtensionApi"` (not load-bearing — customers autowire by type).
+Bean name: `"agentExtension"` (not load-bearing — customers autowire by type).
 
-**`getWebhookApi()` is deliberately abstract**, no `default`. V1 has not yet been through its
-customer-visible release, so forcing all current and future `AgentExtensionApiV1` implementations
+**`webhook()` is deliberately abstract**, no `default`. V1 has not yet been through its
+customer-visible release, so forcing all current and future `AgentExtensionV1` implementations
 to supply the webhook API is cheap today and prevents customers from hand-rolling a half-built
-fake tomorrow. Both known implementations — `AgentExtensionApiV1Impl` in `agent-core` and
-`FakeAgentExtensionApi` in `extension-test` — have been updated in lockstep.
+fake tomorrow. Both known implementations — `AgentExtensionV1Impl` in `agent-core` and
+`FakeAgentExtension` in `extension-test` — have been updated in lockstep.
 
 ### `AgentExtensionContextV1` — per-endpoint context
 
@@ -162,7 +162,7 @@ context has the main agent `ApplicationContext` as its parent, so an extension
 can still autowire agent beans (e.g., `ServerConfig`) and reach other
 extensions' data through them. True cross-extension isolation requires
 restricting the per-endpoint Spring context's bean visibility to the API
-surface (`AgentExtensionApiV1` and whatever is explicitly whitelisted) and
+surface (`AgentExtensionV1` and whatever is explicitly whitelisted) and
 excluding the main agent `ApplicationContext` from the parent chain for
 untrusted extensions. Out of scope for V1; must be in place before any
 "all extensions" accessor is reconsidered.
@@ -170,7 +170,7 @@ untrusted extensions. Out of scope for V1; must be in place before any
 ### `AgentExtensionContextV1.AgentConfiguration` — map-shaped view of a YAML section
 
 Declared as a nested interface on `AgentExtensionContextV1` so that one import brings in both
-the context and its configuration type (same style we use for `AgentWebhookApiV1`'s nested
+the context and its configuration type (same style we use for `AgentWebhookV1`'s nested
 value types).
 
 ```java
@@ -188,15 +188,15 @@ Future typed accessors (`getString`, `getInt`, …) can be added to this
 interface without breaking source or binary compatibility — the `Map` contract
 on the type stays in place.
 
-### `AgentWebhookApiV1` — outbound HTTP transport
+### `AgentWebhookV1` — outbound HTTP transport
 
 Thin wrapper over `POST` with automatic retry, exponential backoff and body-cap truncation.
-Obtained from `AgentExtensionApiV1.getWebhookApi()`. Nested types (`WebhookResponse`,
+Obtained from `AgentExtensionV1.webhook()`. Nested types (`WebhookResponse`,
 `RetryPolicy`, `WebhookDeliveryException`, `WebhookResponseException`) are declared on the
 interface itself — the whole API vocabulary lives in one file.
 
 ```java
-public interface AgentWebhookApiV1 {
+public interface AgentWebhookV1 {
     // send ladder — pick the shortest overload that carries exactly what you need
     WebhookResponse send(String url, Object jsonBody);
     WebhookResponse send(String url, Object jsonBody, Map<String, String> headers);
@@ -284,7 +284,7 @@ Two legacy types remain in `agent-core` under `com.workato.agent.config`:
 
 This module does **not** replace, re-export, or duplicate those types. They stay
 in `agent-core` for backward compatibility with already-built customer JARs
-that import them directly. New extensions should use `AgentExtensionApiV1`
+that import them directly. New extensions should use `AgentExtensionV1`
 instead — it carries the same data (name + YAML section) without the WARN noise.
 Cross-extension visibility (`getAllConfigurations()`) was considered and
 intentionally dropped before release; see the dedicated section above.
@@ -300,15 +300,15 @@ modules/extension-api/
     src/main/java/
         com/workato/agent/extension/api/
             package-info.java                                (Javadoc marker)
-            AgentExtensionApiV1.java                         (entry point)
+            AgentExtensionV1.java                         (entry point)
             AgentExtensionContextV1.java                     (per-endpoint context + nested AgentConfiguration)
-            AgentWebhookApiV1.java                           (webhook transport + nested WebhookResponse / RetryPolicy / exceptions)
+            AgentWebhookV1.java                           (webhook transport + nested WebhookResponse / RetryPolicy / exceptions)
     src/test/java/
         com/workato/agent/extension/api/
-            AgentExtensionApiV1IntegrationTest.java            (full agent boot via testFixtures)
-            AgentWebhookApiV1Test.java                         (unit tests for the webhook nested types)
+            AgentExtensionV1IntegrationTest.java            (full agent boot via testFixtures)
+            AgentWebhookV1Test.java                         (unit tests for the webhook nested types)
             testext/
-                AgentExtensionApiV1Controller.java             (probe controller for the test)
+                AgentExtensionV1Controller.java             (probe controller for the test)
     src/test/resources/
         extensions/agent-extension-api-v1.yml                  (fixture: two profiles)
 ```

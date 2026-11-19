@@ -1,14 +1,14 @@
-package com.mycompany.onprem.timer;
+package com.workato.agent.extension.demo.timer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.mycompany.onprem.timer.TimerExtension.ErrorResponse;
-import com.mycompany.onprem.timer.TimerExtension.FireNowResponse;
-import com.mycompany.onprem.timer.TimerExtension.SubscribeResponse;
-import com.mycompany.onprem.timer.TimerExtension.TimerEvent;
-import com.workato.agent.extension.api.AgentWebhookApiV1.RetryPolicy;
+import com.workato.agent.extension.api.AgentWebhookV1.RetryPolicy;
+import com.workato.agent.extension.demo.timer.TimerExtension.ErrorResponse;
+import com.workato.agent.extension.demo.timer.TimerExtension.FireNowResponse;
+import com.workato.agent.extension.demo.timer.TimerExtension.SubscribeResponse;
+import com.workato.agent.extension.demo.timer.TimerExtension.TimerEvent;
 import com.workato.agent.extension.test.AgentExtensionHarness;
-import com.workato.agent.extension.test.FakeAgentWebhookApiV1.CallKind;
-import com.workato.agent.extension.test.FakeAgentWebhookApiV1.SentCall;
+import com.workato.agent.extension.test.FakeAgentWebhookV1.CallKind;
+import com.workato.agent.extension.test.FakeAgentWebhookV1.SentCall;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -56,18 +56,18 @@ class TimerExtensionTest {
     private static void awaitAtLeast(AgentExtensionHarness h, int n, Duration deadline) throws Exception {
         Instant end = Instant.now().plus(deadline);
         while (Instant.now().isBefore(end)) {
-            if (h.webhookApi().allCalls().size() >= n) {
+            if (h.webhook().allCalls().size() >= n) {
                 return;
             }
             Thread.sleep(50);
         }
         throw new AssertionError("expected at least " + n + " webhook calls within " + deadline
-                + ", got " + h.webhookApi().allCalls().size());
+                + ", got " + h.webhook().allCalls().size());
     }
 
     @BeforeEach
     void resetWebhookState() {
-        agent.webhookApi().reset();
+        agent.webhook().reset();
     }
 
     @AfterEach
@@ -80,7 +80,7 @@ class TimerExtensionTest {
 
     @Test
     void subscribeReturnsIdUuid() throws Exception {
-        agent.webhookApi().whenSent("https://recipe/wh").thenReturn(200, "{}");
+        agent.webhook().whenSent("https://recipe/wh").thenReturn(200, "{}");
         String id = subscribe(agent, "https://recipe/wh", 5, "hi");
         UUID parsed = assertDoesNotThrow(() -> UUID.fromString(id), "not a UUID: " + id);
         assertEquals(4, parsed.version(), "expected a UUIDv4");
@@ -88,7 +88,7 @@ class TimerExtensionTest {
 
     @Test
     void fireNowPostsExpectedPayload() throws Exception {
-        agent.webhookApi().whenSent("https://recipe/wh").thenReturn(200, "{}");
+        agent.webhook().whenSent("https://recipe/wh").thenReturn(200, "{}");
         String id = subscribe(agent, "https://recipe/wh", 5, "hi");
 
         MvcResult fire = postJson(agent, "/webhook/fire_now",
@@ -99,7 +99,7 @@ class TimerExtensionTest {
         assertTrue(fr.delivered());
         assertEquals(200, fr.statusCode());
 
-        SentCall call = agent.webhookApi().lastCall();
+        SentCall call = agent.webhook().lastCall();
         assertEquals(CallKind.SEND, call.kind());
         assertEquals("https://recipe/wh", call.url());
         assertNotNull(call.headers().get("X-Workato-Event-Id"));
@@ -118,7 +118,7 @@ class TimerExtensionTest {
         MvcResult result = postJson(agent, "/webhook/fire_now",
                 MAPPER.writeValueAsString(Map.of("subscription_id", "does-not-exist")));
         assertEquals(404, result.getResponse().getStatus());
-        assertTrue(agent.webhookApi().allCalls().isEmpty());
+        assertTrue(agent.webhook().allCalls().isEmpty());
     }
 
     @Test
@@ -169,17 +169,17 @@ class TimerExtensionTest {
 
     @Test
     void unsubscribeCancelsScheduledTask() throws Exception {
-        agent.webhookApi().whenSent("https://recipe/wh").thenReturn(200, "{}");
+        agent.webhook().whenSent("https://recipe/wh").thenReturn(200, "{}");
         String id = subscribe(agent, "https://recipe/wh", 1, "tick");
 
         awaitAtLeast(agent, 1, Duration.ofSeconds(3));
         postJson(agent, "/webhook/unsubscribe",
                 MAPPER.writeValueAsString(Map.of("recipe_id", id, "connection_id", "conn-1")));
 
-        int n = agent.webhookApi().allCalls().size();
+        int n = agent.webhook().allCalls().size();
         // One period + a cushion — long enough for a stray tick to show up if cancel didn't take.
         Thread.sleep(1500);
-        assertEquals(n, agent.webhookApi().allCalls().size(),
+        assertEquals(n, agent.webhook().allCalls().size(),
                 "scheduler kept firing after unsubscribe");
     }
 
@@ -190,7 +190,7 @@ class TimerExtensionTest {
                 .property("min-period-seconds", "1")
                 .start();
         try {
-            var fake = alt.webhookApi();
+            var fake = alt.webhook();
             fake.whenSent("https://recipe/wh").thenReturn(200, "{}");
             subscribe(alt, "https://recipe/wh", 1, "tick");
             awaitAtLeast(alt, 1, Duration.ofSeconds(3));
@@ -210,21 +210,21 @@ class TimerExtensionTest {
 
     @Test
     void multipleSubscriptionsFireIndependently() throws Exception {
-        agent.webhookApi().whenSent("https://a/wh").thenReturn(200, "{}");
-        agent.webhookApi().whenSent("https://b/wh").thenReturn(200, "{}");
+        agent.webhook().whenSent("https://a/wh").thenReturn(200, "{}");
+        agent.webhook().whenSent("https://b/wh").thenReturn(200, "{}");
         String idA = subscribe(agent, "https://a/wh", 5, "A");
         String idB = subscribe(agent, "https://b/wh", 5, "B");
 
         postJson(agent, "/webhook/fire_now", MAPPER.writeValueAsString(Map.of("subscription_id", idA)));
         postJson(agent, "/webhook/fire_now", MAPPER.writeValueAsString(Map.of("subscription_id", idB)));
 
-        assertEquals(1, agent.webhookApi().callsFor("https://a/wh").size());
-        assertEquals(1, agent.webhookApi().callsFor("https://b/wh").size());
+        assertEquals(1, agent.webhook().callsFor("https://a/wh").size());
+        assertEquals(1, agent.webhook().callsFor("https://b/wh").size());
 
         TimerEvent ea = MAPPER.convertValue(
-                agent.webhookApi().callsFor("https://a/wh").get(0).body(), TimerEvent.class);
+                agent.webhook().callsFor("https://a/wh").get(0).body(), TimerEvent.class);
         TimerEvent eb = MAPPER.convertValue(
-                agent.webhookApi().callsFor("https://b/wh").get(0).body(), TimerEvent.class);
+                agent.webhook().callsFor("https://b/wh").get(0).body(), TimerEvent.class);
         assertEquals(idA, ea.subscriptionId());
         assertEquals(idB, eb.subscriptionId());
         assertEquals("A", ea.message());
@@ -238,8 +238,8 @@ class TimerExtensionTest {
         // first tick's failure and kept firing. With the default (5 attempts)
         // the first tick alone would satisfy ≥2 and the test would pass even
         // if the scheduler died.
-        agent.webhookApi().setDefaultRetryPolicy(RetryPolicy.DEFAULTS.withAttempts(1));
-        agent.webhookApi().whenSent("https://recipe/wh").thenFailAll();
+        agent.webhook().setDefaultRetryPolicy(RetryPolicy.DEFAULTS.withAttempts(1));
+        agent.webhook().whenSent("https://recipe/wh").thenFailAll();
         subscribe(agent, "https://recipe/wh", 1, "tick");
 
         awaitAtLeast(agent, 2, Duration.ofSeconds(5));

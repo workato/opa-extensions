@@ -3,10 +3,10 @@
 Periodic webhook emitter. A Workato recipe subscribes with
 `{message, period_seconds}`; the extension schedules a task that pushes
 `{message, generated_at, tick, subscription_id, period_seconds}` back to the
-recipe every N seconds through `AgentWebhookApiV1.send(...)`.
+recipe every N seconds through `AgentWebhookV1.send(...)`.
 
 Exists purely to showcase the webhook half of the Extension API — the
-`AgentWebhookApiV1` interface that was added in 34.0, together with the SDK's
+`AgentWebhookV1` interface that was added in 34.0, together with the SDK's
 `webhook_subscribe` / `webhook_notification` / `webhook_unsubscribe` trigger
 contract.
 
@@ -28,7 +28,7 @@ contract.
 > `extension-api/README-extension-api.md` → "subscribe/unsubscribe pattern"
 > for the authoritative statement of this limitation.
 >
-> The **outbound** half — `AgentWebhookApiV1.send(...)` and its retry /
+> The **outbound** half — `AgentWebhookV1.send(...)` and its retry /
 > dedup machinery — does **not** have this limitation. Any agent in the
 > group that holds the webhook URL can deliver, and the API itself does not
 > care about group membership. If your extension sources subscription state
@@ -38,18 +38,18 @@ contract.
 
 ## Extension API features demonstrated
 
-| Feature                                             | How                                                                                                                                                                                                                                                                                                          |
-|-----------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **`AgentWebhookApiV1.send(url, body, headers)`**    | The whole point of the demo. One call per tick — delivery, retries, and backoff are the API's job.                                                                                                                                                                                                           |
-| Automatic retries + exponential backoff             | Configured per-profile under `extensions.timer.webhook:` in YAML (see **Configuration** below). We do not implement retry ourselves.                                                                                                                                                                         |
-| Dedup header pattern                                | Every outbound call carries a fresh `X-Workato-Event-Id: <uuid>` — Workato uses it to drop duplicates when at-least-once delivery doubles up a tick.                                                                                                                                                         |
-| Jackson records with `@JsonProperty("snake_case")`  | All JSON boundaries — inbound request bodies, outbound response bodies, and the outbound webhook payload (`TimerEvent`) — go through typed records. Component names compile to camelCase so the annotations are mandatory.                                                                                   |
-| `webhook_subscribe` / `/unsubscribe` HTTP contract  | The three endpoints under `/webhook/*` implement the SDK contract documented in `README-extension-api.md` verbatim. Subscription identity is an extension-generated UUID — the recommended path per that document.                                                                                           |
-| `@Value("${min-period-seconds:5}")`                 | Soft floor on the period, overridable from YAML — tests set it to `1` so the scheduler can tick inside a bounded wait.                                                                                                                                                                                       |
-| `DisposableBean.destroy()` lifecycle                | Cancels in-flight `ScheduledFuture`s, shuts the executor down, and `awaitTermination`s. Fires when the extension's Spring context closes (profile unload or `AgentExtensionHarness.stop()` in tests).                                                                                                        |
-| Lazy init of a shared `ScheduledExecutorService`    | Double-check-locked, daemon-threaded, named `timer-ext-<n>`. Same pattern as **NtlmExtension**'s HttpClient.                                                                                                                                                                                                 |
-| `scheduleWithFixedDelay` over `scheduleAtFixedRate` | `AgentWebhookApiV1.send` is **synchronous and blocks for the whole retry chain** (seconds, not millis). Fixed-rate would queue up back-to-back ticks on the single-threaded executor during a slow one; fixed-delay keeps a full `period_seconds` gap between the end of one tick and the start of the next. |
-| Swallow + log in the scheduler thread               | A `WebhookDeliveryException` on a scheduled tick is caught, logged `WARN`, and the thread stays alive to run the next tick. Contrast with `/fire_now` which propagates the exception to the HTTP response — manual triggers want visible failures.                                                           |
+| Feature                                             | How                                                                                                                                                                                                                                                                                                       |
+|-----------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **`AgentWebhookV1.send(url, body, headers)`**       | The whole point of the demo. One call per tick — delivery, retries, and backoff are the API's job.                                                                                                                                                                                                        |
+| Automatic retries + exponential backoff             | Configured per-profile under `extensions.timer.webhook:` in YAML (see **Configuration** below). We do not implement retry ourselves.                                                                                                                                                                      |
+| Dedup header pattern                                | Every outbound call carries a fresh `X-Workato-Event-Id: <uuid>` — Workato uses it to drop duplicates when at-least-once delivery doubles up a tick.                                                                                                                                                      |
+| Jackson records with `@JsonProperty("snake_case")`  | All JSON boundaries — inbound request bodies, outbound response bodies, and the outbound webhook payload (`TimerEvent`) — go through typed records. Component names compile to camelCase so the annotations are mandatory.                                                                                |
+| `webhook_subscribe` / `/unsubscribe` HTTP contract  | The three endpoints under `/webhook/*` implement the SDK contract documented in `README-extension-api.md` verbatim. Subscription identity is an extension-generated UUID — the recommended path per that document.                                                                                        |
+| `@Value("${min-period-seconds:5}")`                 | Soft floor on the period, overridable from YAML — tests set it to `1` so the scheduler can tick inside a bounded wait.                                                                                                                                                                                    |
+| `DisposableBean.destroy()` lifecycle                | Cancels in-flight `ScheduledFuture`s, shuts the executor down, and `awaitTermination`s. Fires when the extension's Spring context closes (profile unload or `AgentExtensionHarness.stop()` in tests).                                                                                                     |
+| Lazy init of a shared `ScheduledExecutorService`    | Double-check-locked, daemon-threaded, named `timer-ext-<n>`. Same pattern as **NtlmExtension**'s HttpClient.                                                                                                                                                                                              |
+| `scheduleWithFixedDelay` over `scheduleAtFixedRate` | `AgentWebhookV1.send` is **synchronous and blocks for the whole retry chain** (seconds, not millis). Fixed-rate would queue up back-to-back ticks on the single-threaded executor during a slow one; fixed-delay keeps a full `period_seconds` gap between the end of one tick and the start of the next. |
+| Swallow + log in the scheduler thread               | A `WebhookDeliveryException` on a scheduled tick is caught, logged `WARN`, and the thread stays alive to run the next tick. Contrast with `/fire_now` which propagates the exception to the HTTP response — manual triggers want visible failures.                                                        |
 
 Not demonstrated here (see other extensions):
 
@@ -68,7 +68,7 @@ All under `/ext/{profile}/webhook/*`.
 | `POST` | `/unsubscribe` | `{recipe_id (= our UUID), connection_id}`                                  | `204 No Content`                                                                               |
 | `POST` | `/fire_now`    | `{subscription_id}`                                                        | `200 {"delivered": <bool>, "status_code": <int>}` or `404 {"error":"unknown subscription_id"}` |
 
-Outbound tick payload — the body `AgentWebhookApiV1.send(...)` POSTs to
+Outbound tick payload — the body `AgentWebhookV1.send(...)` POSTs to
 `workato_webhook_url`:
 
 ```json
@@ -89,7 +89,7 @@ runs out of the box with the YAML snippet below:
 ```yaml
 extensions:
   timer:
-    controller: com.mycompany.onprem.timer.TimerExtension
+    controller: com.workato.agent.extension.demo.timer.TimerExtension
 ```
 
 Full configuration surface, every key shown with its default:
@@ -97,7 +97,7 @@ Full configuration surface, every key shown with its default:
 ```yaml
 extensions:
   timer:
-    controller: com.mycompany.onprem.timer.TimerExtension
+    controller: com.workato.agent.extension.demo.timer.TimerExtension
 
     # Optional — soft floor on period_seconds a recipe may request.
     # Default: 5. Tests lower it to 1 so the scheduler can tick inside a
@@ -105,7 +105,7 @@ extensions:
     min-period-seconds: 5
 
     # Optional — per-profile override of the retry policy
-    # AgentWebhookApiV1.send(...) uses. Omitting the whole `webhook:` block
+    # AgentWebhookV1.send(...) uses. Omitting the whole `webhook:` block
     # leaves every key at its default (5 attempts, 1s → 2s → 4s → 8s backoff,
     # no jitter, 30 s per-attempt timeout, 1 MB response cap). Individual
     # keys inside the block are also optional — a typo on one key logs a
@@ -123,7 +123,7 @@ extensions:
 
 - `min-period-seconds` — rejects `/subscribe` calls with a smaller
   `period_seconds`. Keeps a demo from DoS-ing the recipe.
-- `webhook:` — read by the agent's `AgentWebhookApiV1` implementation, not
+- `webhook:` — read by the agent's `AgentWebhookV1` implementation, not
   by our code. See `extension-api/README-extension-api.md` section
   "Configuration via YAML" for the full policy semantics.
 

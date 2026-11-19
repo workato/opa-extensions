@@ -3,8 +3,8 @@
  */
 package com.workato.agent.extension.test.testext;
 
-import com.workato.agent.extension.api.AgentExtensionApiV1;
-import com.workato.agent.extension.api.AgentWebhookApiV1;
+import com.workato.agent.extension.api.AgentExtensionV1;
+import com.workato.agent.extension.api.AgentWebhookV1;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -15,7 +15,7 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Probe controller that exercises the full {@link AgentWebhookApiV1} surface — send ladder,
+ * Probe controller that exercises the full {@link AgentWebhookV1} surface — send ladder,
  * wakeup ladder, custom headers, response deserialization — so a single harness-level test can
  * pin that extensions actually see the webhook fake through the normal autowire path.
  */
@@ -23,14 +23,14 @@ import java.util.UUID;
 public class WebhookInvokingController {
 
     @Autowired
-    AgentExtensionApiV1 agent;
+    AgentExtensionV1 agent;
 
     /**
      * POST /fire — forward the request body to a canonical webhook URL via the simplest {@code send}.
      */
     @PostMapping(value = "/fire", produces = MediaType.APPLICATION_JSON_VALUE)
     public Map<String, Object> fire(@RequestBody Map<String, Object> payload) {
-        AgentWebhookApiV1.WebhookResponse response = agent.getWebhookApi()
+        AgentWebhookV1.WebhookResponse response = agent.webhook()
                 .send("https://recipe/webhook", payload);
         return Map.of("delivered", true, "status", response.statusCode());
     }
@@ -40,7 +40,7 @@ public class WebhookInvokingController {
      */
     @PostMapping(value = "/fire-with-headers", produces = MediaType.APPLICATION_JSON_VALUE)
     public Map<String, Object> fireWithHeaders(@RequestBody Map<String, Object> payload) {
-        agent.getWebhookApi().send(
+        agent.webhook().send(
                 "https://recipe/webhook", payload,
                 Map.of("X-Request-ID", "fixed-id-for-test"));
         return Map.of("delivered", true);
@@ -51,7 +51,7 @@ public class WebhookInvokingController {
      */
     @PostMapping(value = "/wake", produces = MediaType.APPLICATION_JSON_VALUE)
     public Map<String, Object> wake() {
-        agent.getWebhookApi().wakeup("https://recipe/trigger");
+        agent.webhook().wakeup("https://recipe/trigger");
         return Map.of("woken", true);
     }
 
@@ -60,7 +60,7 @@ public class WebhookInvokingController {
      */
     @PostMapping(value = "/fire-and-parse", produces = MediaType.APPLICATION_JSON_VALUE)
     public Map<String, Object> fireAndParse(@RequestBody Map<String, Object> payload) {
-        AgentWebhookApiV1.WebhookResponse resp = agent.getWebhookApi()
+        AgentWebhookV1.WebhookResponse resp = agent.webhook()
                 .send("https://recipe/webhook", payload,
                         Map.of("X-Request-ID", UUID.randomUUID().toString()));
         Ack ack = resp.as(Ack.class);

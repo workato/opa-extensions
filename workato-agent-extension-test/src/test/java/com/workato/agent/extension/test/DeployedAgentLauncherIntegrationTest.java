@@ -118,7 +118,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>
  * The {@link #DEPLOYED_WITH_CONF} and {@link #CONF_ONLY} layouts target OPA 34, which ships
  * {@code extension-api-*.jar} in {@code lib/} — the corresponding tests mount
- * {@link EchoController} which {@code @Autowires} {@code AgentExtensionApiV1}. The
+ * {@link EchoController} which {@code @Autowires} {@code AgentExtensionV1}. The
  * {@link #DEPLOYED_WITHOUT_CONF} layout targets OPA 33 where the V1 API jar is absent, so its
  * tests mount {@link PortableEchoController} instead (depends only on Spring, no agent-side
  * types) so the controller still class-loads inside the agent's isolated classloader.
@@ -171,7 +171,7 @@ class DeployedAgentLauncherIntegrationTest {
                 .containsEntry("profile", PROFILE);
     }
 
-    // PortableEchoController depends only on Spring (no AgentExtensionApiV1), so its /echo
+    // PortableEchoController depends only on Spring (no AgentExtensionV1), so its /echo
     // payload does not include the profile — assert only the greeting round-trip.
     private static void assertPortableEchoRespondsOverLocalHttp(DeployedAgentLauncher.RunningAgent agent,
                                                                 String expectedGreeting) throws Exception {

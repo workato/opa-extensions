@@ -12,7 +12,7 @@ import org.springframework.test.web.servlet.MvcResult;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * HTTP happy-path: GET endpoint, {@code @Value} injection, {@code @Autowired AgentExtensionApiV1}.
+ * HTTP happy-path: GET endpoint, {@code @Value} injection, {@code @Autowired AgentExtensionV1}.
  * Pure controller-side behaviour — the fake API's own contract is pinned separately in
  * {@link AgentExtensionContextV1Test}.
  */

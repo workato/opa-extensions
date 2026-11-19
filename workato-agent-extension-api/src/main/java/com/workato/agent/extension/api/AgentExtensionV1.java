@@ -12,10 +12,10 @@ package com.workato.agent.extension.api;
  * <p>A separate instance exists in every extension's isolated Spring context,
  * so {@link #getContext()} always reflects the current endpoint — the one
  * serving the request. The implementation is supplied by {@code agent-core}
- * ({@code com.workato.agent.extension.AgentExtensionApiV1Impl}) and registered
+ * ({@code com.workato.agent.extension.AgentExtensionV1Impl}) and registered
  * by {@code EndpointBeanRegistrar} per endpoint.
  */
-public interface AgentExtensionApiV1 {
+public interface AgentExtensionV1 {
 
     /**
      * Context of the extension endpoint that owns this API instance: its
@@ -27,10 +27,10 @@ public interface AgentExtensionApiV1 {
      * Thin wrapper over outbound {@code POST} with retry and exponential backoff, for pushing
      * events to a recipe webhook URL or waking a pull-mode recipe trigger. The returned instance
      * is scoped to this extension's profile — the retry policy comes from the profile's YAML
-     * {@code webhook:} section, falling back to {@link AgentWebhookApiV1.RetryPolicy#DEFAULTS}
+     * {@code webhook:} section, falling back to {@link AgentWebhookV1.RetryPolicy#DEFAULTS}
      * when the section is absent.
      *
      * <p>Thread-safe; extensions can cache the reference and call it from any thread.
      */
-    AgentWebhookApiV1 getWebhookApi();
+    AgentWebhookV1 webhook();
 }

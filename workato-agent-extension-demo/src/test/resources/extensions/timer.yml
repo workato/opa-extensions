@@ -1,4 +1,4 @@
 extensions:
   timer:
-    controller: com.mycompany.onprem.timer.TimerExtension
+    controller: com.workato.agent.extension.demo.timer.TimerExtension
     min-period-seconds: 1

@@ -39,7 +39,7 @@ agent provides it at runtime; shading would cause classloader conflicts.
 ```java
 package com.example.my_extension;
 
-import com.workato.agent.extension.api.AgentExtensionApiV1;
+import com.workato.agent.extension.api.AgentExtensionV1;
 import com.workato.agent.extension.api.AgentExtensionContextV1.AgentConfiguration;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -52,7 +52,7 @@ import java.util.Map;
 public class MyController {
 
     @Autowired
-    private AgentExtensionApiV1 agent;
+    private AgentExtensionV1 agent;
 
     @Value("${my-custom-property}")              // resolved from YAML; see §4
     private String myProperty;
@@ -98,16 +98,16 @@ Requests from Workato arrive at `POST /ext/my-extension/my-operation`.
 
 Every type lives in `com.workato.agent.extension.api`.
 
-### `AgentExtensionApiV1` — the autowired bean
+### `AgentExtensionV1` — the autowired bean
 
 ```java
-public interface AgentExtensionApiV1 {
+public interface AgentExtensionV1 {
     AgentExtensionContextV1 getContext();
 }
 ```
 
 Autowire this. One instance exists per extension endpoint; it is scoped to
-your extension's isolated Spring context. The bean name is `"agentExtensionApi"`,
+your extension's isolated Spring context. The bean name is `"agentExtension"`,
 but you should autowire by type, not by name.
 
 ### `AgentExtensionContextV1` — your endpoint's view of the agent
@@ -130,18 +130,18 @@ public interface AgentExtensionContextV1 {
 > isolation on its own: an extension controller still shares a Spring parent
 > context with agent internals and can reach other beans by autowiring.)
 
-### `AgentWebhookApiV1` — outbound HTTP transport
+### `AgentWebhookV1` — outbound HTTP transport
 
-Obtained via `agent.getWebhookApi()`. A thin wrapper over `POST` with automatic retry and
+Obtained via `agent.webhook()`. A thin wrapper over `POST` with automatic retry and
 exponential backoff — the only outbound-HTTP primitive extensions need when they want to push an
 event to a recipe webhook URL or wake a pull-mode trigger. All nested types
 (`WebhookResponse`, `RetryPolicy`, `WebhookDeliveryException`, `WebhookResponseException`) live
 on the interface itself, so a single import brings in the whole vocabulary:
 
 ```java
-import com.workato.agent.extension.api.AgentWebhookApiV1;
-import com.workato.agent.extension.api.AgentWebhookApiV1.WebhookResponse;
-import com.workato.agent.extension.api.AgentWebhookApiV1.RetryPolicy;
+import com.workato.agent.extension.api.AgentWebhookV1;
+import com.workato.agent.extension.api.AgentWebhookV1.WebhookResponse;
+import com.workato.agent.extension.api.AgentWebhookV1.RetryPolicy;
 ```
 
 **`send` ladder** — pick the shortest overload that carries exactly what you need:
@@ -158,12 +158,12 @@ import com.workato.agent.extension.api.AgentWebhookApiV1.RetryPolicy;
 endpoint:
 
 ```java
-agent.getWebhookApi().
+agent.webhook().
 
 wakeup("https://recipe/trigger");
 agent.
 
-getWebhookApi().
+webhook().
 
 wakeup("https://recipe/trigger",
        Map.of("X-Request-ID", "req-1"));
@@ -172,7 +172,7 @@ wakeup("https://recipe/trigger",
 **Response & deserialization.** Every call returns a `WebhookResponse`:
 
 ```java
-WebhookResponse resp = agent.getWebhookApi().send(url, payload);
+WebhookResponse resp = agent.webhook().send(url, payload);
 if(resp.
 
 isSuccessful()){
@@ -233,8 +233,8 @@ connector — any extension that wants to serve as such a connector follows it v
 > under a group requires either a shared registry (database, Redis, …) or a group-aware
 > subscribe fan-out — both out of scope for this API and currently unaddressed by the SDK.
 >
-> **The outbound API itself — {@link AgentWebhookApiV1#send send} and
-> {@link AgentWebhookApiV1#wakeup wakeup} — has no such limitation.** It POSTs to a URL
+> **The outbound API itself — {@link AgentWebhookV1#send send} and
+> {@link AgentWebhookV1#wakeup wakeup} — has no such limitation.** It POSTs to a URL
 > Workato controls; the agent is just an HTTP client. Any agent in the group that holds the
 > URL can deliver, and nothing in the webhook transport cares about group membership. If your
 > extension stores subscription state out-of-band (e.g., pulled from an external system on
@@ -275,7 +275,7 @@ connector — any extension that wants to serve as such a connector follows it v
 public class WebhookSubscriptionController {
 
     @Autowired
-    private AgentExtensionApiV1 agent;
+    private AgentExtensionV1 agent;
 
     /** Keyed by an extension-generated UUID returned to the SDK as the subscribe response id. */
     private final Map<String, Subscription> active = new ConcurrentHashMap<>();
@@ -319,7 +319,7 @@ public class WebhookSubscriptionController {
         Subscription sub = active.get(subscriptionId);
         if (sub == null)
             return;
-        WebhookResponse r = agent.getWebhookApi().send(sub.webhookUrl(), payload,
+        WebhookResponse r = agent.webhook().send(sub.webhookUrl(), payload,
                 Map.of("X-Workato-Event-Id", UUID.randomUUID().toString()));
         log.debug("Delivered to {} (sub {}, recipe {}), status {}",
                 sub.webhookUrl(), subscriptionId, sub.workatoRecipeId(), r.statusCode());
@@ -397,7 +397,7 @@ Replace with:
 ```java
 
 @Autowired
-AgentExtensionApiV1 agent;
+AgentExtensionV1 agent;
 ```
 
 Then migrate each call site:
@@ -417,7 +417,7 @@ yourself, or inject the leaf with `@Value`.
 
 The deprecated `com.workato.agent.config.ExtensionEndpoint` interface has no
 bean registered against it — `@Autowired ExtensionEndpoint` fails at startup
-with `NoSuchBeanDefinitionException`. Use `@Autowired AgentExtensionApiV1`
+with `NoSuchBeanDefinitionException`. Use `@Autowired AgentExtensionV1`
 instead.
 
 ### `@Value` continues to work
@@ -425,14 +425,14 @@ instead.
 The `@Value("${property}")` path is unchanged — resolution still goes through
 the agent's internal `EndpointPropertySource` and does **not** emit any WARN.
 If your extension only reads config properties via `@Value`, you have nothing
-to migrate right now. Still, moving to `AgentExtensionApiV1` is recommended
+to migrate right now. Still, moving to `AgentExtensionV1` is recommended
 before the legacy types are removed.
 
 ## Troubleshooting
 
 | Symptom                                                                | Likely cause                                                                                                                                                                             |
 |------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `NoSuchBeanDefinitionException` on `@Autowired ExtensionEndpoint`      | You are using the deprecated interface. Switch to `AgentExtensionApiV1`. See migration section.                                                                                          |
+| `NoSuchBeanDefinitionException` on `@Autowired ExtensionEndpoint`      | You are using the deprecated interface. Switch to `AgentExtensionV1`. See migration section.                                                                                             |
 | WARN `Extension [X] called deprecated DefaultExtensionEndpoint#name()` | A caller is still on the legacy record. Follow the migration table — the WARN mentions the exact replacement.                                                                            |
 | `/ext/{name}/{path}` returns 404                                       | Either the extension name is not declared under `extensions:` in `config.yml`, or the controller class could not be loaded (check the agent log for `Endpoint [{name}] failed to load`). |
 | Changes to a redeployed JAR don't take effect                          | Classloader is fixed for the agent's lifetime. Restart the agent after replacing a JAR.                                                                                                  |
@@ -440,11 +440,11 @@ before the legacy types are removed.
 
 ## Versioning
 
-The API is named `AgentExtensionApiV1` / `AgentExtensionContextV1` (with its nested
-`AgentConfiguration`) / `AgentWebhookApiV1` (with its nested `WebhookResponse`, `RetryPolicy`,
+The API is named `AgentExtensionV1` / `AgentExtensionContextV1` (with its nested
+`AgentConfiguration`) / `AgentWebhookV1` (with its nested `WebhookResponse`, `RetryPolicy`,
 `WebhookDeliveryException`, `WebhookResponseException`).
 
-- `AgentExtensionApiV1` and `AgentExtensionContextV1` are **consumer-only** —
+- `AgentExtensionV1` and `AgentExtensionContextV1` are **consumer-only** —
   customer code calls their methods but does not implement them (the
   implementation is supplied by the agent). Methods may be added to these
   interfaces without breaking customer compile or runtime, as long as the
@@ -455,7 +455,7 @@ The API is named `AgentExtensionApiV1` / `AgentExtensionContextV1` (with its nes
 - Incompatible changes will introduce a parallel `V2` family and keep `V1`
   running until a documented removal window.
 
-If you write a hand-rolled implementation of `AgentExtensionApiV1` or
+If you write a hand-rolled implementation of `AgentExtensionV1` or
 `AgentExtensionContextV1` for testing, prefer the harness in `extension-test`
 over implementing the interfaces directly — the harness is kept in sync as
 the interfaces evolve.

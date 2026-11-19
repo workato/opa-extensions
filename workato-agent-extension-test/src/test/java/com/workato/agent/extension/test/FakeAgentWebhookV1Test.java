@@ -3,11 +3,11 @@
  */
 package com.workato.agent.extension.test;
 
-import com.workato.agent.extension.api.AgentWebhookApiV1.RetryPolicy;
-import com.workato.agent.extension.api.AgentWebhookApiV1.WebhookDeliveryException;
-import com.workato.agent.extension.api.AgentWebhookApiV1.WebhookResponse;
-import com.workato.agent.extension.test.FakeAgentWebhookApiV1.CallKind;
-import com.workato.agent.extension.test.FakeAgentWebhookApiV1.SentCall;
+import com.workato.agent.extension.api.AgentWebhookV1.RetryPolicy;
+import com.workato.agent.extension.api.AgentWebhookV1.WebhookDeliveryException;
+import com.workato.agent.extension.api.AgentWebhookV1.WebhookResponse;
+import com.workato.agent.extension.test.FakeAgentWebhookV1.CallKind;
+import com.workato.agent.extension.test.FakeAgentWebhookV1.SentCall;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -25,12 +25,12 @@ import static org.junit.jupiter.api.Assertions.*;
  * the fake honours {@link RetryPolicy} the same way the agent-core production impl does — if these
  * fail, extensions that pass against the fake will drift from how the agent actually behaves.
  */
-class FakeAgentWebhookApiV1Test {
+class FakeAgentWebhookV1Test {
 
     private static final String URL = "https://recipe/webhook";
     private static final String OTHER = "https://other/webhook";
 
-    FakeAgentWebhookApiV1 api;
+    FakeAgentWebhookV1 api;
 
     private static WebhookResponse canned(int status, String body) {
         return new WebhookResponse(status, body, false, Map.of(), 1, Duration.ZERO);
@@ -38,7 +38,7 @@ class FakeAgentWebhookApiV1Test {
 
     @BeforeEach
     void setUp() {
-        api = new FakeAgentWebhookApiV1();
+        api = new FakeAgentWebhookV1();
     }
 
     @Nested

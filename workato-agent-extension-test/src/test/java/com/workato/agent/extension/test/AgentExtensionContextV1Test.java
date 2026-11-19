@@ -3,9 +3,9 @@
  */
 package com.workato.agent.extension.test;
 
-import com.workato.agent.extension.api.AgentExtensionApiV1;
 import com.workato.agent.extension.api.AgentExtensionContextV1;
 import com.workato.agent.extension.api.AgentExtensionContextV1.AgentConfiguration;
+import com.workato.agent.extension.api.AgentExtensionV1;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
@@ -16,12 +16,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Contract tests for the fake {@link AgentExtensionApiV1} / {@link AgentExtensionContextV1} /
+ * Contract tests for the fake {@link AgentExtensionV1} / {@link AgentExtensionContextV1} /
  * {@link AgentConfiguration} shipped by {@code extension-test}.
  *
  * <p>Serves as the single, discoverable place that pins the test-side mock behaves exactly as
- * the production implementation ({@code AgentExtensionApiV1Impl} in {@code agent-core}, pinned by
- * {@code AgentExtensionApiV1ImplTest} in {@code agent-launcher}'s test tree). Any customer who
+ * the production implementation ({@code AgentExtensionV1Impl} in {@code agent-core}, pinned by
+ * {@code AgentExtensionV1ImplTest} in {@code agent-launcher}'s test tree). Any customer who
  * wants to know "what guarantees does the fake make?" reads this file.
  *
  * <p>When extending the V1 API, add a corresponding assertion here <em>and</em> in the production
@@ -35,18 +35,18 @@ class AgentExtensionContextV1Test extends AbstractExtensionTest {
             .yaml("extensions/echo.yml");
 
     private static AgentExtensionContextV1 context() {
-        return agent.agentExtensionApi().getContext();
+        return agent.agentExtension().getContext();
     }
 
     private static AgentConfiguration configuration() {
         return context().getProfileConfiguration();
     }
 
-    // ---- AgentExtensionApiV1 --------------------------------------------------------------------
+    // ---- AgentExtensionV1 --------------------------------------------------------------------
 
     @Test
-    void agentExtensionApiBeanIsRegistered() {
-        AgentExtensionApiV1 api = agent.agentExtensionApi();
+    void agentExtensionBeanIsRegistered() {
+        AgentExtensionV1 api = agent.agentExtension();
         assertThat(api).isNotNull();
         assertThat(api.getContext()).isNotNull();
     }

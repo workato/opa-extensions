@@ -3,10 +3,10 @@
  */
 package com.workato.agent.extension.api;
 
-import com.workato.agent.extension.api.AgentWebhookApiV1.RetryPolicy;
-import com.workato.agent.extension.api.AgentWebhookApiV1.WebhookDeliveryException;
-import com.workato.agent.extension.api.AgentWebhookApiV1.WebhookResponse;
-import com.workato.agent.extension.api.AgentWebhookApiV1.WebhookResponseException;
+import com.workato.agent.extension.api.AgentWebhookV1.RetryPolicy;
+import com.workato.agent.extension.api.AgentWebhookV1.WebhookDeliveryException;
+import com.workato.agent.extension.api.AgentWebhookV1.WebhookResponse;
+import com.workato.agent.extension.api.AgentWebhookV1.WebhookResponseException;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
@@ -17,7 +17,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Unit tests for the nested value types on {@link AgentWebhookApiV1} — the vocabulary customer
+ * Unit tests for the nested value types on {@link AgentWebhookV1} — the vocabulary customer
  * extensions depend on without ever touching the agent-core implementation.
  *
  * <p>These tests cover record validation, immutability guarantees, the {@link RetryPolicy}
@@ -26,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * exceptions. Behavioural testing of the full retry loop lives in the agent-core impl's own test
  * and in the fake / parity suite in {@code extension-test}.
  */
-class AgentWebhookApiV1Test {
+class AgentWebhookV1Test {
 
     @Nested
     class RetryPolicyDefaults {

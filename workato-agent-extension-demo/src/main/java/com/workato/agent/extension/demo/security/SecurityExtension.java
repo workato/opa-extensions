@@ -2,10 +2,10 @@
  * Copyright (c) 2018 MyCompany, Inc. All rights reserved.
  */
 
-package com.mycompany.onprem.security;
+package com.workato.agent.extension.demo.security;
 
-import com.workato.agent.extension.api.AgentExtensionApiV1;
 import com.workato.agent.extension.api.AgentExtensionContextV1.AgentConfiguration;
+import com.workato.agent.extension.api.AgentExtensionV1;
 import jakarta.inject.Inject;
 import org.apache.commons.codec.binary.Hex;
 import org.slf4j.Logger;
@@ -26,7 +26,7 @@ public class SecurityExtension {
     private static final Logger log = LoggerFactory.getLogger(SecurityExtension.class);
 
     @Inject
-    private AgentExtensionApiV1 agent;
+    private AgentExtensionV1 agent;
 
     @PostMapping("/computeDigest")
     public Map<String, Object> computeDigest(@RequestBody Map<String, Object> body) {

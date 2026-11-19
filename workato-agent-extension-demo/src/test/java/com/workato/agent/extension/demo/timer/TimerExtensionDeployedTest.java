@@ -1,11 +1,11 @@
-package com.mycompany.onprem.timer;
+package com.workato.agent.extension.demo.timer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.mycompany.onprem.timer.TimerExtension.FireNowRequest;
-import com.mycompany.onprem.timer.TimerExtension.FireNowResponse;
-import com.mycompany.onprem.timer.TimerExtension.SubscribeRequest;
-import com.mycompany.onprem.timer.TimerExtension.SubscribeResponse;
 import com.sun.net.httpserver.HttpServer;
+import com.workato.agent.extension.demo.timer.TimerExtension.FireNowRequest;
+import com.workato.agent.extension.demo.timer.TimerExtension.FireNowResponse;
+import com.workato.agent.extension.demo.timer.TimerExtension.SubscribeRequest;
+import com.workato.agent.extension.demo.timer.TimerExtension.SubscribeResponse;
 import com.workato.agent.extension.test.DeployedAgentLauncher;
 import com.workato.agent.extension.test.DeployedAgentLauncher.RunningAgent;
 import org.junit.jupiter.api.Disabled;

@@ -1,4 +1,4 @@
-package com.mycompany.onprem.ntlm;
+package com.workato.agent.extension.demo.ntlm;
 
 import com.workato.agent.extension.test.DeployedAgentLauncher;
 import com.workato.agent.extension.test.DeployedAgentLauncher.RunningAgent;

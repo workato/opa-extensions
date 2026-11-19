@@ -3,15 +3,15 @@
  */
 package com.workato.agent.extension.test;
 
-import com.workato.agent.extension.api.AgentExtensionApiV1;
 import com.workato.agent.extension.api.AgentExtensionContextV1;
 import com.workato.agent.extension.api.AgentExtensionContextV1.AgentConfiguration;
-import com.workato.agent.extension.api.AgentWebhookApiV1;
+import com.workato.agent.extension.api.AgentExtensionV1;
+import com.workato.agent.extension.api.AgentWebhookV1;
 
 import java.util.*;
 
 /**
- * Fake {@link AgentExtensionApiV1} suitable for standalone unit / integration tests of a customer
+ * Fake {@link AgentExtensionV1} suitable for standalone unit / integration tests of a customer
  * extension. Carries the profile name and the YAML-shaped configuration the test supplies to
  * the {@link AgentExtensionHarness} builder.
  *
@@ -22,18 +22,18 @@ import java.util.*;
  * {@code getProfileConfiguration()} fails in the test rather than silently drifting from
  * production behaviour.
  */
-final class FakeAgentExtensionApi implements AgentExtensionApiV1 {
+final class FakeAgentExtension implements AgentExtensionV1 {
 
     private final AgentExtensionContextV1 context;
-    private final FakeAgentWebhookApiV1 webhookApi;
+    private final FakeAgentWebhookV1 webhook;
 
-    FakeAgentExtensionApi(String profileName, Map<String, Object> properties) {
-        this(profileName, properties, new FakeAgentWebhookApiV1());
+    FakeAgentExtension(String profileName, Map<String, Object> properties) {
+        this(profileName, properties, new FakeAgentWebhookV1());
     }
 
-    FakeAgentExtensionApi(String profileName, Map<String, Object> properties, FakeAgentWebhookApiV1 webhookApi) {
+    FakeAgentExtension(String profileName, Map<String, Object> properties, FakeAgentWebhookV1 webhook) {
         this.context = new FakeContext(profileName, properties);
-        this.webhookApi = webhookApi;
+        this.webhook = webhook;
     }
 
     private static AgentConfiguration unmodifiable(Map<String, Object> source) {
@@ -47,12 +47,12 @@ final class FakeAgentExtensionApi implements AgentExtensionApiV1 {
     }
 
     @Override
-    public AgentWebhookApiV1 getWebhookApi() {
-        return webhookApi;
+    public AgentWebhookV1 webhook() {
+        return webhook;
     }
 
-    FakeAgentWebhookApiV1 fakeWebhookApi() {
-        return webhookApi;
+    FakeAgentWebhookV1 fakeWebhookApi() {
+        return webhook;
     }
 
     private record FakeContext(String profileName,

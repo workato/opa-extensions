@@ -24,7 +24,7 @@ Two complementary test-time tools for agent extensions:
 
 ### What `AgentExtensionHarness` covers without starting the agent
 
-- `@Autowired AgentExtensionApiV1` into your controller
+- `@Autowired AgentExtensionV1` into your controller
 - `@Value("${key}")` injection with the same direct-lookup semantics as the agent
   (dots in keys are literal, not nesting separators)
 - Request routing to `/ext/{profile-name}/*`
@@ -194,7 +194,7 @@ controller(ctrl);
 ```
 
 In that case Spring does *not* autowire the instance — only the
-`"agentExtensionApi"` bean is still exposed via the harness context so you can
+`"agentExtension"` bean is still exposed via the harness context so you can
 assert against it or set it manually.
 
 ### Reusing an existing Spring context — `.parentContext(...)`
@@ -233,7 +233,7 @@ class MyControllerTest {
 }
 ```
 
-**Precedence.** Child beans (your controller, `"agentExtensionApi"`, and
+**Precedence.** Child beans (your controller, `"agentExtension"`, and
 anything added via `.bean(...)` / `.configuration(...)`) shadow same-named
 parent beans. Standard Spring child-context semantics.
 
@@ -293,12 +293,12 @@ Dots are literal, not nesting separators — exactly like production
 `EndpointPropertySource`. A key `mail.pop3.username` is looked up as that
 literal string.
 
-### Via `AgentExtensionApiV1`
+### Via `AgentExtensionV1`
 
 ```java
 
 @Autowired
-AgentExtensionApiV1 agent;
+AgentExtensionV1 agent;
 
 Map<String, Object> cfg = agent.getContext().getProfileConfiguration();
 String name = agent.getContext().getProfileName();
@@ -310,16 +310,16 @@ implementation returns: `put`/`remove`/`clear`/`putAll` throw
 configuration, the test fails here rather than silently drifting from
 production behaviour.
 
-## Testing webhook calls — `FakeAgentWebhookApiV1`
+## Testing webhook calls — `FakeAgentWebhookV1`
 
-If your extension calls `agent.getWebhookApi().send(...)` or `.wakeup(...)`, the harness ships a
-`FakeAgentWebhookApiV1` that captures every attempt and lets you stub responses. Access it with
-`harness.webhookApi()` — no cast needed.
+If your extension calls `agent.webhook().send(...)` or `.wakeup(...)`, the harness ships a
+`FakeAgentWebhookV1` that captures every attempt and lets you stub responses. Access it with
+`harness.webhook()` — no cast needed.
 
 > **Nested-type imports.** The examples below use `CallKind` and `SentCall` (both nested on
-> `FakeAgentWebhookApiV1`) and `RetryPolicy` / `WebhookResponse` / `WebhookDeliveryException`
-> (nested on `AgentWebhookApiV1`). Import them as e.g.
-> `import com.workato.agent.extension.test.FakeAgentWebhookApiV1.CallKind;` or qualify them
+> `FakeAgentWebhookV1`) and `RetryPolicy` / `WebhookResponse` / `WebhookDeliveryException`
+> (nested on `AgentWebhookV1`). Import them as e.g.
+> `import com.workato.agent.extension.test.FakeAgentWebhookV1.CallKind;` or qualify them
 > inline — IDE auto-import handles both.
 
 ```java
@@ -330,19 +330,19 @@ static AgentExtensionHarness agent = AgentExtensionHarness.extension("my-profile
 @BeforeEach
 void resetWebhookState() {
     // Class-level harness → same fake across tests; reset log + stubs before each case.
-    agent.webhookApi().reset();
+    agent.webhook().reset();
 }
 
 @Test
 void controllerDeliversExpectedPayload() throws Exception {
-    agent.webhookApi()
+    agent.webhook()
         .whenSent("https://recipe/webhook")
         .thenReturn(200, "{\"ack\":true}");
 
     agent.mockMvc().perform(agent.request(MyController::fire)
             .contentType(APPLICATION_JSON).content("{\"x\":1}"));
 
-    var call = agent.webhookApi().lastCall();
+    var call = agent.webhook().lastCall();
     assertEquals(Map.of("x", 1), call.body());
     assertEquals(CallKind.SEND, call.kind());
 }
@@ -373,10 +373,10 @@ per-test override is the typical pattern.
 ### Observing captured calls
 
 ```java
-List<SentCall> all     = agent.webhookApi().allCalls();
-List<SentCall> toUrl   = agent.webhookApi().callsFor("https://recipe/webhook");
-List<SentCall> wakeups = agent.webhookApi().callsOfKind(CallKind.WAKEUP);
-SentCall last          = agent.webhookApi().lastCall();   // throws if empty
+List<SentCall> all     = agent.webhook().allCalls();
+List<SentCall> toUrl   = agent.webhook().callsFor("https://recipe/webhook");
+List<SentCall> wakeups = agent.webhook().callsOfKind(CallKind.WAKEUP);
+SentCall last          = agent.webhook().lastCall();   // throws if empty
 ```
 
 `SentCall` records one HTTP attempt, so a `send` that retried 3 times produces 3 `SentCall`s
@@ -393,7 +393,7 @@ order are preserved exactly as production produces them.
 Tune the policy per-test by passing a `RetryPolicy` to the overload:
 
 ```java
-agent.webhookApi().setDefaultRetryPolicy(RetryPolicy.DEFAULTS.withAttempts(3));
+agent.webhook().setDefaultRetryPolicy(RetryPolicy.DEFAULTS.withAttempts(3));
 // or override per-call via send(url, body, policy)
 ```
 
@@ -403,7 +403,7 @@ agent.webhookApi().setDefaultRetryPolicy(RetryPolicy.DEFAULTS.withAttempts(3));
 `ObjectMapper`:
 
 ```java
-Ack ack = agent.webhookApi().lastCall().response().as(Ack.class);
+Ack ack = agent.webhook().lastCall().response().as(Ack.class);
 ```
 
 Throws `WebhookResponseException` on `null` body, invalid JSON, or type mismatch. For generic
@@ -415,8 +415,8 @@ overload is on the V1.1 shortlist.
 | Method                                  | What it returns                                                                                                                                |
 |-----------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------|
 | `mockMvc()`                             | Spring's `MockMvc` for issuing requests                                                                                                        |
-| `agentExtensionApi()`                   | The `AgentExtensionApiV1` the controller sees — handy for direct assertions                                                                    |
-| `webhookApi()`                          | The `FakeAgentWebhookApiV1` the controller sees through `agent.getWebhookApi()` — stub responses, assert against the captured call log         |
+| `agentExtension()`                      | The `AgentExtensionV1` the controller sees — handy for direct assertions                                                                       |
+| `webhook()`                             | The `FakeAgentWebhookV1` the controller sees through `agent.webhook()` — stub responses, assert against the captured call log                  |
 | `webApplicationContext()`               | The underlying `AnnotationConfigWebApplicationContext` for advanced wiring                                                                     |
 | `profileName()`                         | The configured profile name                                                                                                                    |
 | `urlFor(path)`                          | The full request path including the `/ext/{profile}` prefix                                                                                    |
@@ -864,7 +864,7 @@ are unaffected.
 
 | Symptom                                                                                                                                        | Likely cause                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 |------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `IllegalStateException: Harness has not been started — call start() or use @RegisterExtension`                                                 | You called `mockMvc()` / `agentExtensionApi()` before `start()`. Either register the harness with `@RegisterExtension` or call `.start()` in your own `@BeforeAll`.                                                                                                                                                                                                                                                                                                        |
+| `IllegalStateException: Harness has not been started — call start() or use @RegisterExtension`                                                 | You called `mockMvc()` / `agentExtension()` before `start()`. Either register the harness with `@RegisterExtension` or call `.start()` in your own `@BeforeAll`.                                                                                                                                                                                                                                                                                                           |
 | `IllegalStateException: controller(...) may be called only once per harness`                                                                   | You chained `.controller(X.class)` and `.controller(y)` on the same harness. Pick one; the harness holds exactly one controller per instance.                                                                                                                                                                                                                                                                                                                              |
 | `IllegalStateException: A controller must be available — call .controller(...), or load a YAML whose extensions.{p} section …`                 | Neither `.controller(...)` was called nor the YAML section carries a `controller:` / `controllerClass:` key.                                                                                                                                                                                                                                                                                                                                                               |
 | `IllegalStateException: Controller class declared in YAML for extension '{p}' is not on the test classpath: {class}`                           | YAML `controller:` names a class that cannot be loaded by the test classloader (typo or missing dependency).                                                                                                                                                                                                                                                                                                                                                               |
@@ -876,7 +876,7 @@ are unaffected.
 | **`DeployedAgentLauncher`** — `Agent SSL context is incomplete` on startup                                                                     | The dist's `conf/cert.pem` / `conf/cert.key` are missing or unreadable. Full gateway mode requires an activated distribution; call `openLocalAccess()` if you only need direct local HTTP.                                                                                                                                                                                                                                                                                 |
 | **`DeployedAgentLauncher`** — direct local HTTP works but Workato cloud does not see the agent                                                 | By design. `--connector-listen` (set by `openLocalAccess(...)`) triggers `AgentEnabled.isEnabled() == false`, which suppresses the outbound gateway beans. Switch to full gateway mode (omit `openLocalAccess(...)`) and verify with `awaitGatewayConnected(Duration)`.                                                                                                                                                                                                    |
 | **`DeployedAgentLauncher`** — `java.util.concurrent.TimeoutException` from `awaitGatewayConnected`                                             | The agent is not completing the mTLS handshake within the budget. Check cert files are present and valid, egress to the gateway host is open, and the dist is actually activated for your workspace.                                                                                                                                                                                                                                                                       |
-| **`DeployedAgentLauncher`** — `NoClassDefFoundError: com/workato/agent/extension/api/AgentExtensionApiV1`                                      | The dist is older than the extension API your controller compiles against. Either use a newer dist, point `path` at a loose-conf directory (no `lib/`) so the local-build fallback supplies the current jars, or avoid `AgentExtensionApiV1` in the test controller (configure via `@Value("${…}")` only).                                                                                                                                                                 |
+| **`DeployedAgentLauncher`** — `NoClassDefFoundError: com/workato/agent/extension/api/AgentExtensionV1`                                         | The dist is older than the extension API your controller compiles against. Either use a newer dist, point `path` at a loose-conf directory (no `lib/`) so the local-build fallback supplies the current jars, or avoid `AgentExtensionV1` in the test controller (configure via `@Value("${…}")` only).                                                                                                                                                                    |
 | **`DeployedAgentLauncher`** — `GatewayCheck` fails with `"unable to find valid certification path to requested target"` (local-build fallback) | The local build's `workato.properties / gateway.ca.file` targets a different environment than the external cert does (e.g., prod jars + preview cert). The loose-conf trust override expects every PEM listed in `gateway.ca.file` to actually be present under `path/conf/` — missing files are skipped silently and partial chains fail validation. Verify the layout, or pass `--cert /abs/path.pem` manually via `argument(...)` to override.                          |
 | **`DeployedAgentLauncher`** — `Agent version: X` in the log is not the version you expect from the dist's jar name                             | The agent's `Config.init` only reads `workato.properties` from the jar classpath; the one in `conf/` is ignored by default. The launcher auto-injects `--workato-properties <abs path>` when it finds `path/conf/workato.properties`, which makes every entry (`agent.version`, `agent.default.gateway`, `gateway.ca.file`, …) override the jar's. Verify the loose file exists next to `cert.pem`; or pass `--workato-properties /abs/path` manually via `argument(...)`. |
 | **`DeployedAgentLauncher`** — second `start()` in the same JVM fails or hangs                                                                  | The agent's `Launcher` state machine does not allow a re-start. Run each `DeployedAgentLauncher`-driven test in its own JVM (one `@Test` method per Gradle invocation).                                                                                                                                                                                                                                                                                                    |

@@ -195,7 +195,7 @@ Conventions, copied verbatim from `SecurityExtensionDeployedTest` /
        activation certs, trust store, and the extension's bean wiring do
        not block mTLS startup.
 - If the extension emits outbound HTTP (webhook-style — see
-  `TimerExtension` + `AgentWebhookApiV1`), start a tiny loopback
+  `TimerExtension` + `AgentWebhookV1`), start a tiny loopback
   `com.sun.net.httpserver.HttpServer` sink in the test to capture the
   delivered payload and headers, and assert on them.
 

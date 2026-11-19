@@ -1,4 +1,4 @@
 extensions:
   security:
-    controller: com.mycompany.onprem.security.SecurityExtension
+    controller: com.workato.agent.extension.demo.security.SecurityExtension
     signing-secret: test-secret

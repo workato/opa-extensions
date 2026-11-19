@@ -3,7 +3,7 @@
  */
 package com.workato.agent.extension.test;
 
-import com.workato.agent.extension.api.AgentWebhookApiV1;
+import com.workato.agent.extension.api.AgentWebhookV1;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -15,7 +15,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Predicate;
 
 /**
- * Fake {@link AgentWebhookApiV1} suitable for standalone unit / integration tests of a customer
+ * Fake {@link AgentWebhookV1} suitable for standalone unit / integration tests of a customer
  * extension. Captures every delivery attempt in a call log the test can assert against, and lets
  * the test stub HTTP outcomes (specific status / body, network failure, scripted sequences)
  * without opening a real socket.
@@ -39,10 +39,10 @@ import java.util.function.Predicate;
  *
  * <h2>Typical usage</h2>
  * <pre>{@code
- * FakeAgentWebhookApiV1 webhookApi = harness.webhookApi();
+ * FakeAgentWebhookV1 webhook = harness.webhook();
  *
  * // Scenario: recipe answers 503 twice, then 200.
- * webhookApi.whenSent("https://recipe/webhook")
+ * webhook.whenSent("https://recipe/webhook")
  *     .thenReturnSequence(
  *         WebhookResponses.of(503, "retry me"),
  *         WebhookResponses.of(503, "retry me"),
@@ -50,17 +50,17 @@ import java.util.function.Predicate;
  *
  * harness.mockMvc().perform(agent.request(MyController::fire));
  *
- * assertEquals(3, webhookApi.callsFor("https://recipe/webhook").size());
- * assertEquals("abc", webhookApi.lastCall().response().as(Ack.class).id());
+ * assertEquals(3, webhook.callsFor("https://recipe/webhook").size());
+ * assertEquals("abc", webhook.lastCall().response().as(Ack.class).id());
  * }</pre>
  */
-public final class FakeAgentWebhookApiV1 implements AgentWebhookApiV1 {
+public final class FakeAgentWebhookV1 implements AgentWebhookV1 {
 
     private final List<SentCall> calls = new CopyOnWriteArrayList<>();
     private final List<StubEntry> stubs = new CopyOnWriteArrayList<>();
     private volatile RetryPolicy defaultPolicy = RetryPolicy.DEFAULTS;
 
-    // ----- send ladder (AgentWebhookApiV1) -----------------------------------------------------
+    // ----- send ladder (AgentWebhookV1) -----------------------------------------------------
     // Short overloads delegate to the 4-arg "root" so headers/policy normalisation lives in one place.
 
     private static Predicate<String> matchExact(String url) {
@@ -83,7 +83,7 @@ public final class FakeAgentWebhookApiV1 implements AgentWebhookApiV1 {
         return headers == null ? Map.of() : Map.copyOf(headers);
     }
 
-    // ----- wakeup ladder (AgentWebhookApiV1) ---------------------------------------------------
+    // ----- wakeup ladder (AgentWebhookV1) ---------------------------------------------------
 
     private static RetryPolicy requireNonNullPolicy(RetryPolicy p) {
         if (p == null) {
@@ -108,7 +108,7 @@ public final class FakeAgentWebhookApiV1 implements AgentWebhookApiV1 {
         return send(url, jsonBody, policy, Map.of());
     }
 
-    // ----- introspection (AgentWebhookApiV1) ---------------------------------------------------
+    // ----- introspection (AgentWebhookV1) ---------------------------------------------------
 
     @Override
     public WebhookResponse send(String url, Object jsonBody, RetryPolicy policy, Map<String, String> headers) {
@@ -302,11 +302,11 @@ public final class FakeAgentWebhookApiV1 implements AgentWebhookApiV1 {
      */
     public enum CallKind {
         /**
-         * {@link AgentWebhookApiV1#send} family.
+         * {@link AgentWebhookV1#send} family.
          */
         SEND,
         /**
-         * {@link AgentWebhookApiV1#wakeup} family.
+         * {@link AgentWebhookV1#wakeup} family.
          */
         WAKEUP
     }
@@ -436,7 +436,7 @@ public final class FakeAgentWebhookApiV1 implements AgentWebhookApiV1 {
 
         @Override
         public void thenFailAll() {
-            thenFail(new IOException("simulated network failure (FakeAgentWebhookApiV1)"));
+            thenFail(new IOException("simulated network failure (FakeAgentWebhookV1)"));
         }
 
         @Override

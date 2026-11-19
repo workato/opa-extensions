@@ -1,8 +1,8 @@
-package com.mycompany.onprem.timer;
+package com.workato.agent.extension.demo.timer;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.workato.agent.extension.api.AgentExtensionApiV1;
-import com.workato.agent.extension.api.AgentWebhookApiV1.WebhookResponse;
+import com.workato.agent.extension.api.AgentExtensionV1;
+import com.workato.agent.extension.api.AgentWebhookV1.WebhookResponse;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,7 +29,7 @@ public class TimerExtension implements InitializingBean, DisposableBean {
     private final ConcurrentHashMap<String, Subscription> active = new ConcurrentHashMap<>();
 
     @Autowired
-    private AgentExtensionApiV1 agent;
+    private AgentExtensionV1 agent;
 
     @Value("${min-period-seconds:5}")
     private int minPeriodSeconds;
@@ -113,7 +113,7 @@ public class TimerExtension implements InitializingBean, DisposableBean {
                 sub.tick.incrementAndGet(),
                 sub.id,
                 sub.periodSeconds);
-        return agent.getWebhookApi().send(sub.webhookUrl, event,
+        return agent.webhook().send(sub.webhookUrl, event,
                 Map.of("X-Workato-Event-Id", UUID.randomUUID().toString()));
     }
 

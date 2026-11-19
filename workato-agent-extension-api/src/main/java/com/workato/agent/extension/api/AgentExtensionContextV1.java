@@ -7,7 +7,7 @@ import java.util.Map;
 
 /**
  * Per-endpoint context handed to a customer extension controller through
- * {@link AgentExtensionApiV1#getContext()}.
+ * {@link AgentExtensionV1#getContext()}.
  *
  * <p>Replaces the legacy {@code com.workato.agent.config.DefaultExtensionEndpoint}
  * record (bean name {@code "workatoEndpoint"}); a different instance of

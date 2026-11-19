@@ -3,7 +3,7 @@
  */
 package com.workato.agent.extension.test.testext;
 
-import com.workato.agent.extension.api.AgentExtensionApiV1;
+import com.workato.agent.extension.api.AgentExtensionV1;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
@@ -20,7 +20,7 @@ import java.util.Map;
 public class EchoController {
 
     @Autowired
-    AgentExtensionApiV1 agent;
+    AgentExtensionV1 agent;
 
     @Value("${greeting}")
     String greeting;

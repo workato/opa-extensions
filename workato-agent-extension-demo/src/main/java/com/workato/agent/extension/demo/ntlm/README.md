@@ -14,7 +14,7 @@ exist in the first place.
 
 | Feature                                              | How                                                                                                                                                                       |
 |------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `@Autowired AgentExtensionApiV1`                     | Spring form of the autowire — alternative to `@Inject` seen in **SecurityExtension**.                                                                                     |
+| `@Autowired AgentExtensionV1`                        | Spring form of the autowire — alternative to `@Inject` seen in **SecurityExtension**.                                                                                     |
 | `@Value("${connect-timeout-ms:5000}")` with defaults | Property injection with a fallback; honours the agent's dot-literal lookup semantics (dots in keys are literal, not nesting markers).                                     |
 | Multiple injected scalars + a list-shaped key        | `connect-timeout-ms`, `read-timeout-ms`, `ntlm.allowed-hosts` — the last one is parsed into a comma-separated allow-list.                                                 |
 | Lazy init of a shared resource (DCL pattern)         | `volatile CloseableHttpClient httpClient;` + double-check locking in `client()`. Mirrors the pattern **TimerExtension** uses for its `ScheduledExecutorService`.          |
@@ -24,7 +24,7 @@ exist in the first place.
 Not demonstrated here (see other extensions):
 
 - `AgentExtensionContextV1.getProfileConfiguration()` map read → **SecurityExtension**.
-- Outbound HTTP via `AgentWebhookApiV1.send(...)` → **TimerExtension**.
+- Outbound HTTP via `AgentWebhookV1.send(...)` → **TimerExtension**.
 - Background scheduler + `DisposableBean.destroy()` lifecycle → **TimerExtension**.
 
 ## HTTP endpoint
@@ -49,7 +49,7 @@ Response:
 ```yaml
 extensions:
   ntlm:
-    controller: com.mycompany.onprem.ntlm.NtlmExtension
+    controller: com.workato.agent.extension.demo.ntlm.NtlmExtension
     connect-timeout-ms: 5000          # default 5000
     read-timeout-ms: 30000            # default 30000
     ntlm.allowed-hosts: "intranet.corp.local, *.corp.local"

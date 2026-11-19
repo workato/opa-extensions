@@ -1,4 +1,4 @@
-package com.mycompany.onprem.security;
+package com.workato.agent.extension.demo.security;
 
 import com.workato.agent.extension.test.DeployedAgentLauncher;
 import com.workato.agent.extension.test.DeployedAgentLauncher.RunningAgent;
