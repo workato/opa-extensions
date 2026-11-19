@@ -33,4 +33,13 @@ public interface AgentExtensionV1 {
      * <p>Thread-safe; extensions can cache the reference and call it from any thread.
      */
     AgentWebhookV1 webhook();
+
+    /**
+     * Agent-provided utilities (currently a shared {@link tools.jackson.databind.ObjectMapper})
+     * that the extension should use instead of constructing its own. Keeps Jackson out of the
+     * extension's shaded jar and aligns extension JSON handling with the agent's configuration.
+     *
+     * <p>Thread-safe; extensions can cache the reference.
+     */
+    AgentToolsV1 getTools();
 }

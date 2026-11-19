@@ -6,7 +6,10 @@ package com.workato.agent.extension.test;
 import com.workato.agent.extension.api.AgentExtensionContextV1;
 import com.workato.agent.extension.api.AgentExtensionContextV1.AgentConfiguration;
 import com.workato.agent.extension.api.AgentExtensionV1;
+import com.workato.agent.extension.api.AgentToolsV1;
 import com.workato.agent.extension.api.AgentWebhookV1;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.util.*;
 
@@ -26,6 +29,7 @@ final class FakeAgentExtension implements AgentExtensionV1 {
 
     private final AgentExtensionContextV1 context;
     private final FakeAgentWebhookV1 webhook;
+    private final AgentToolsV1 tools;
 
     FakeAgentExtension(String profileName, Map<String, Object> properties) {
         this(profileName, properties, new FakeAgentWebhookV1());
@@ -34,6 +38,7 @@ final class FakeAgentExtension implements AgentExtensionV1 {
     FakeAgentExtension(String profileName, Map<String, Object> properties, FakeAgentWebhookV1 webhook) {
         this.context = new FakeContext(profileName, properties);
         this.webhook = webhook;
+        this.tools = new FakeTools(JsonMapper.builder().build());
     }
 
     private static AgentConfiguration unmodifiable(Map<String, Object> source) {
@@ -51,8 +56,16 @@ final class FakeAgentExtension implements AgentExtensionV1 {
         return webhook;
     }
 
+    @Override
+    public AgentToolsV1 getTools() {
+        return tools;
+    }
+
     FakeAgentWebhookV1 fakeWebhookApi() {
         return webhook;
+    }
+
+    private record FakeTools(ObjectMapper objectMapper) implements AgentToolsV1 {
     }
 
     private record FakeContext(String profileName,

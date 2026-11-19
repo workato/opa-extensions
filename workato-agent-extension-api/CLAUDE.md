@@ -27,8 +27,8 @@ Public API that customer-developed agent extensions compile against.
 > A PR that touches `AgentExtensionV1`, `AgentExtensionContextV1` (including its nested
 > `AgentConfiguration`), `AgentWebhookV1` (including its nested
 > `WebhookResponse` / `RetryPolicy` / `WebhookDeliveryException` /
-> `WebhookResponseException`), or `package-info.java` without touching README.md is
-> almost certainly incomplete.
+> `WebhookResponseException`), `AgentToolsV1`, or `package-info.java` without touching
+> README.md is almost certainly incomplete.
 
 > **Keep `extension-test` in sync.** The `extension-test` module ships the
 > customer-facing fakes/harness that mock this API without the agent. Every change
@@ -77,9 +77,12 @@ genuinely needed, but should be kept minimal — every dependency added here is 
 dependency every customer JAR inherits.
 
 Current state: zero *mandatory agent-side* runtime dependencies. **Jackson databind** is a
-`compileOnly` dependency used by `AgentWebhookV1.WebhookResponse.as(Class<T>)` and is assumed
-to be provided by the hosting Spring environment (which it always is in a Workato extension
-context — Spring MVC pulls it in). Extensions must not shade Jackson in their JARs.
+`compileOnly` dependency, used by (a) `AgentToolsV1.objectMapper()` as the return type exposed
+to extensions and (b) `AgentWebhookV1.WebhookResponse.as(Class<T>, ObjectMapper)` as a
+parameter type. The API module itself never instantiates an `ObjectMapper` — the mapper is
+always supplied by the agent (via `AgentToolsV1`) or by the caller. The hosting Spring
+environment is assumed to provide Jackson on the runtime classpath (it does — Spring MVC pulls
+it in). Extensions must not shade Jackson in their JARs.
 
 If a future API addition needs another library, add it as `compileOnly` only when the hosting
 environment is guaranteed to provide it at runtime; otherwise rewrite the API to avoid the
@@ -88,7 +91,7 @@ existing extension JAR classloader.
 
 ## API Surface (V1)
 
-Four interfaces plus the four nested types inside `AgentWebhookV1`, all under
+Five interfaces plus the four nested types inside `AgentWebhookV1`, all under
 `com.workato.agent.extension.api`. The implementation is supplied by `agent-core` and registered
 per-endpoint by `EndpointBeanRegistrar`; customer controllers obtain it via Spring injection:
 
@@ -110,17 +113,20 @@ endpoint owning the current request.
 ```java
 public interface AgentExtensionV1 {
     AgentExtensionContextV1 getContext();
+
     AgentWebhookV1 webhook();          // NEW in V1
+
+    AgentToolsV1 getTools();           // NEW in V1
 }
 ```
 
 Bean name: `"agentExtension"` (not load-bearing — customers autowire by type).
 
-**`webhook()` is deliberately abstract**, no `default`. V1 has not yet been through its
-customer-visible release, so forcing all current and future `AgentExtensionV1` implementations
-to supply the webhook API is cheap today and prevents customers from hand-rolling a half-built
-fake tomorrow. Both known implementations — `AgentExtensionV1Impl` in `agent-core` and
-`FakeAgentExtension` in `extension-test` — have been updated in lockstep.
+**`webhook()` and `getTools()` are deliberately abstract**, no `default`. V1 has not yet been
+through its customer-visible release, so forcing all current and future `AgentExtensionV1`
+implementations to supply both is cheap today and prevents customers from hand-rolling a
+half-built fake tomorrow. Both known implementations — `AgentExtensionV1Impl` in `agent-core`
+and `FakeAgentExtension` in `extension-test` — are kept in lockstep.
 
 ### `AgentExtensionContextV1` — per-endpoint context
 
@@ -188,6 +194,31 @@ Future typed accessors (`getString`, `getInt`, …) can be added to this
 interface without breaking source or binary compatibility — the `Map` contract
 on the type stays in place.
 
+### `AgentToolsV1` — agent-provided utilities bag
+
+```java
+public interface AgentToolsV1 {
+    ObjectMapper objectMapper();    // tools.jackson.databind.ObjectMapper, agent's shared instance
+}
+```
+
+Returned instances are **references** to objects the agent itself owns — not copies. Jackson's
+`ObjectMapper` is documented as thread-safe, so sharing is safe; but mutation (`registerModule`,
+feature toggles) leaks into every other extension and the agent itself. Extensions needing a
+customised mapper must call `ObjectMapper.copy()` first.
+
+Why a bag (vs. direct `agent.objectMapper()` on `AgentExtensionV1`): keeps the `AgentExtensionV1`
+surface stable as the agent decides to expose more infrastructure (future candidates: an HTTP
+client, a scheduler, a metrics registry) — new additions land on `AgentToolsV1` without
+touching every extension's autowire site. The `getTools()` getter is the single evolution
+seam.
+
+The implementation on the agent side lives next to `AgentExtensionV1Impl` in `agent-core`
+(same `com.workato.agent.extension` package). The fake implementation in
+`extension-test` constructs a fresh `JsonMapper.builder().build()` — for a test fixture the
+agent's configuration is not available (and would need to be, if we grew tool surface that
+genuinely required it).
+
 ### `AgentWebhookV1` — outbound HTTP transport
 
 Thin wrapper over `POST` with automatic retry, exponential backoff and body-cap truncation.
@@ -199,14 +230,20 @@ interface itself — the whole API vocabulary lives in one file.
 public interface AgentWebhookV1 {
     // send ladder — pick the shortest overload that carries exactly what you need
     WebhookResponse send(String url, Object jsonBody);
+
     WebhookResponse send(String url, Object jsonBody, Map<String, String> headers);
+
     WebhookResponse send(String url, Object jsonBody, RetryPolicy policy);
+
     WebhookResponse send(String url, Object jsonBody, RetryPolicy policy, Map<String, String> headers);
 
     // wakeup ladder — empty POST, same four shapes
     WebhookResponse wakeup(String url);
+
     WebhookResponse wakeup(String url, Map<String, String> headers);
+
     WebhookResponse wakeup(String url, RetryPolicy policy);
+
     WebhookResponse wakeup(String url, RetryPolicy policy, Map<String, String> headers);
 
     RetryPolicy getDefaultRetryPolicy();
@@ -214,25 +251,32 @@ public interface AgentWebhookV1 {
     record WebhookResponse(int statusCode, String body, boolean bodyTruncated,
                            Map<String, List<String>> headers, int attemptCount, Duration elapsed) {
         public boolean isSuccessful();
-        public <T> T as(Class<T> type);          // Jackson-backed; throws WebhookResponseException
+
+        public <T> T as(Class<T> type, ObjectMapper mapper);  // caller-supplied mapper; throws WebhookResponseException
     }
 
     record RetryPolicy(int maxAttempts, Duration initialDelay, double multiplier,
                        Duration maxDelay, double jitterFactor, Duration requestTimeout,
                        IntPredicate retryableStatusCode, Predicate<IOException> retryableException) {
         public static final RetryPolicy DEFAULTS = /* 5 attempts, 1s/2x/30s, no jitter, 30s timeout, 5xx/408/429 */;
+
         public RetryPolicy withAttempts(int n);
+
         public RetryPolicy withTimeout(Duration t);
+
         public RetryPolicy withJitter(double factor);
     }
 
     final class WebhookDeliveryException extends RuntimeException {
         public String getUrl();
+
         public int getAttemptCount();
+
         public WebhookResponse getLastResponse();  // null on terminal network error
     }
 
-    final class WebhookResponseException extends RuntimeException { }
+    final class WebhookResponseException extends RuntimeException {
+    }
 }
 ```
 
@@ -249,9 +293,21 @@ WARN + per-key fallback.
 `opa.webhook.{send,retry,fail,latency}` with tags `profile`, `kind` (`send`/`wakeup`), and
 `reason`/`outcome`. Not exposed on the API surface.
 
+**The mapper is caller-supplied.** `WebhookResponse` is a pure data record with no reference
+to the agent, so it cannot reach `agent.getTools().objectMapper()` on its own. Callers pass
+the mapper explicitly — the recommended source is `agent.getTools().objectMapper()` for
+agent-consistent Jackson configuration, but any locally-configured mapper works. Rejected
+alternatives: (a) static `MAPPER` on `WebhookResponse` — bakes a Jackson configuration into
+the public contract and makes `new ObjectMapper()` the implicit default, which is wrong for
+any extension with timestamps or unknown-field tolerance; (b) `WebhookResponse` carrying a
+deserializer SAM as a record component — expands the record signature publicly and shows up
+in `equals` / `hashCode` / accessors.
+
 **Deliberate omissions in V1** (candidates for V1.1 if customer feedback warrants):
 
-- `as(TypeReference<T>)` for generic deserialization (`List<Foo>`, `Map<...>`).
+- `as(TypeReference<T>, ObjectMapper)` for generic deserialization (`List<Foo>`, `Map<...>`).
+  Workaround today: call `ObjectMapper#readValue` with the `TypeReference` directly against
+  `response.body()`.
 - `send(WebhookRequest)` builder-based overload — the four-way positional ladder covers the
   known use cases; promote to a builder only when it genuinely stops being enough.
 - Non-JSON content types / non-POST methods.
@@ -300,9 +356,10 @@ modules/extension-api/
     src/main/java/
         com/workato/agent/extension/api/
             package-info.java                                (Javadoc marker)
-            AgentExtensionV1.java                         (entry point)
+            AgentExtensionV1.java                            (entry point)
             AgentExtensionContextV1.java                     (per-endpoint context + nested AgentConfiguration)
-            AgentWebhookV1.java                           (webhook transport + nested WebhookResponse / RetryPolicy / exceptions)
+            AgentWebhookV1.java                              (webhook transport + nested WebhookResponse / RetryPolicy / exceptions)
+            AgentToolsV1.java                                (agent-provided utility bag — ObjectMapper for now)
     src/test/java/
         com/workato/agent/extension/api/
             AgentExtensionV1IntegrationTest.java            (full agent boot via testFixtures)

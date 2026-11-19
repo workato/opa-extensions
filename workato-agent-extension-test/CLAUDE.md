@@ -221,6 +221,30 @@ accidentally mutates the configuration (`cfg.put(...)`) would see the test
 pass and production fail with `UnsupportedOperationException`. Keeping the
 test's contract strictly as tight as production's is the point.
 
+### 4a. `getTools()` is a fresh `JsonMapper` in the harness
+
+`FakeAgentExtension` implements `AgentExtensionV1.getTools()` by returning an
+`AgentToolsV1` whose `objectMapper()` is a freshly-constructed
+`tools.jackson.databind.json.JsonMapper.builder().build()` — vanilla defaults,
+no custom modules. Production's `AgentExtensionV1Impl` returns the agent's
+shared Spring-managed `ObjectMapper`, so there is a fidelity gap: if a customer
+test relies on Jackson modules the agent registers (e.g., a `JavaTimeModule`
+for `Instant` fields), the harness will silently produce different results.
+
+Why not mirror production and inject the test's own Spring `ObjectMapper` bean
+automatically? Because the harness is dependency-light by design — it does not
+run a `ComponentScan`, and we deliberately avoid magic bean autodiscovery
+(same rationale as the "no `@ComponentScan`" trade-off below). Customers who
+need module parity should either register their configured `ObjectMapper` as
+a bean via `.bean("objectMapper", mapper)` and have the controller autowire
+it directly, or construct one in the test and pass it to
+`WebhookResponse.as(type, mapper)` explicitly.
+
+The fake lives in `FakeAgentExtension` as a private `FakeTools` record — one
+line of implementation. If tool surface grows beyond `objectMapper()` (future
+candidates: scheduler, metrics registry, HTTP client), extend both production
+and `FakeTools` in the same PR to keep the fidelity invariant intact.
+
 ### 5. Both JUnit 5 lifecycle variants
 
 `AgentExtensionHarness` implements all four of `BeforeAllCallback`,

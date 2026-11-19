@@ -9,6 +9,8 @@ import com.workato.agent.extension.api.AgentWebhookV1.WebhookResponse;
 import com.workato.agent.extension.api.AgentWebhookV1.WebhookResponseException;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 import java.util.List;
@@ -22,9 +24,9 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  * <p>These tests cover record validation, immutability guarantees, the {@link RetryPolicy}
  * default values and wither-style copies, {@link WebhookResponse#isSuccessful()} /
- * {@link WebhookResponse#as(Class)} happy and failure paths, and the shape of the two unchecked
- * exceptions. Behavioural testing of the full retry loop lives in the agent-core impl's own test
- * and in the fake / parity suite in {@code extension-test}.
+ * {@link WebhookResponse#as(Class, ObjectMapper)} happy and failure paths, and the shape of the
+ * two unchecked exceptions. Behavioural testing of the full retry loop lives in the agent-core
+ * impl's own test and in the fake / parity suite in {@code extension-test}.
  */
 class AgentWebhookV1Test {
 
@@ -234,11 +236,13 @@ class AgentWebhookV1Test {
     @Nested
     class WebhookResponseAsClass {
 
+        private final ObjectMapper mapper = JsonMapper.builder().build();
+
         @Test
         void deserializesSimpleRecord() {
             WebhookResponse r = new WebhookResponse(200,
                     "{\"id\":\"abc\",\"code\":42}", false, Map.of(), 1, Duration.ZERO);
-            Ack ack = r.as(Ack.class);
+            Ack ack = r.as(Ack.class, mapper);
             assertEquals("abc", ack.id());
             assertEquals(42, ack.code());
         }
@@ -248,7 +252,7 @@ class AgentWebhookV1Test {
             WebhookResponse r = new WebhookResponse(200,
                     "{\"x\":1,\"y\":\"z\"}", false, Map.of(), 1, Duration.ZERO);
             @SuppressWarnings("unchecked")
-            Map<String, Object> map = r.as(Map.class);
+            Map<String, Object> map = r.as(Map.class, mapper);
             assertEquals(1, map.get("x"));
             assertEquals("z", map.get("y"));
         }
@@ -256,14 +260,21 @@ class AgentWebhookV1Test {
         @Test
         void throwsOnNullType() {
             WebhookResponse r = new WebhookResponse(200, "{}", false, Map.of(), 1, Duration.ZERO);
-            var ex = assertThrows(WebhookResponseException.class, () -> r.as(null));
+            var ex = assertThrows(WebhookResponseException.class, () -> r.as(null, mapper));
             assertTrue(ex.getMessage().contains("type"));
+        }
+
+        @Test
+        void throwsOnNullMapper() {
+            WebhookResponse r = new WebhookResponse(200, "{}", false, Map.of(), 1, Duration.ZERO);
+            var ex = assertThrows(WebhookResponseException.class, () -> r.as(Ack.class, null));
+            assertTrue(ex.getMessage().contains("mapper"));
         }
 
         @Test
         void throwsOnNullBody() {
             WebhookResponse r = new WebhookResponse(204, null, false, Map.of(), 1, Duration.ZERO);
-            var ex = assertThrows(WebhookResponseException.class, () -> r.as(Ack.class));
+            var ex = assertThrows(WebhookResponseException.class, () -> r.as(Ack.class, mapper));
             assertTrue(ex.getMessage().contains("null"));
             assertTrue(ex.getMessage().contains("204"));
         }
@@ -271,7 +282,7 @@ class AgentWebhookV1Test {
         @Test
         void throwsOnInvalidJson() {
             WebhookResponse r = new WebhookResponse(200, "not json at all", false, Map.of(), 1, Duration.ZERO);
-            var ex = assertThrows(WebhookResponseException.class, () -> r.as(Ack.class));
+            var ex = assertThrows(WebhookResponseException.class, () -> r.as(Ack.class, mapper));
             assertTrue(ex.getMessage().contains(Ack.class.getName()));
             assertNotNull(ex.getCause());
         }
@@ -280,7 +291,7 @@ class AgentWebhookV1Test {
         void throwsOnTypeMismatch() {
             WebhookResponse r = new WebhookResponse(200,
                     "{\"id\":\"abc\",\"code\":\"not-a-number\"}", false, Map.of(), 1, Duration.ZERO);
-            assertThrows(WebhookResponseException.class, () -> r.as(Ack.class));
+            assertThrows(WebhookResponseException.class, () -> r.as(Ack.class, mapper));
         }
 
         @Test
@@ -288,7 +299,7 @@ class AgentWebhookV1Test {
             WebhookResponse r = new WebhookResponse(200,
                     "{\"id\":\"abc\",\"code\":", /* bodyTruncated */ true,
                     Map.of(), 1, Duration.ZERO);
-            var ex = assertThrows(WebhookResponseException.class, () -> r.as(Ack.class));
+            var ex = assertThrows(WebhookResponseException.class, () -> r.as(Ack.class, mapper));
             assertTrue(ex.getMessage().contains("truncated"),
                     "Message should hint that truncation is the likely cause: " + ex.getMessage());
         }

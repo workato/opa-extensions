@@ -323,6 +323,7 @@ If your extension calls `agent.webhook().send(...)` or `.wakeup(...)`, the harne
 > inline — IDE auto-import handles both.
 
 ```java
+
 @RegisterExtension
 static AgentExtensionHarness agent = AgentExtensionHarness.extension("my-profile")
         .controller(MyController.class);
@@ -336,8 +337,8 @@ void resetWebhookState() {
 @Test
 void controllerDeliversExpectedPayload() throws Exception {
     agent.webhook()
-        .whenSent("https://recipe/webhook")
-        .thenReturn(200, "{\"ack\":true}");
+            .whenSent("https://recipe/webhook")
+            .thenReturn(200, "{\"ack\":true}");
 
     agent.mockMvc().perform(agent.request(MyController::fire)
             .contentType(APPLICATION_JSON).content("{\"x\":1}"));
@@ -373,10 +374,10 @@ per-test override is the typical pattern.
 ### Observing captured calls
 
 ```java
-List<SentCall> all     = agent.webhook().allCalls();
-List<SentCall> toUrl   = agent.webhook().callsFor("https://recipe/webhook");
+List<SentCall> all = agent.webhook().allCalls();
+List<SentCall> toUrl = agent.webhook().callsFor("https://recipe/webhook");
 List<SentCall> wakeups = agent.webhook().callsOfKind(CallKind.WAKEUP);
-SentCall last          = agent.webhook().lastCall();   // throws if empty
+SentCall last = agent.webhook().lastCall();   // throws if empty
 ```
 
 `SentCall` records one HTTP attempt, so a `send` that retried 3 times produces 3 `SentCall`s
@@ -393,22 +394,33 @@ order are preserved exactly as production produces them.
 Tune the policy per-test by passing a `RetryPolicy` to the overload:
 
 ```java
-agent.webhook().setDefaultRetryPolicy(RetryPolicy.DEFAULTS.withAttempts(3));
+agent.webhook().
+
+setDefaultRetryPolicy(RetryPolicy.DEFAULTS.withAttempts(3));
 // or override per-call via send(url, body, policy)
 ```
 
 ### Response deserialization
 
-`WebhookResponse.as(Class<T>)` on both fake and production uses a shared Jackson
-`ObjectMapper`:
+`WebhookResponse.as(Class<T>, ObjectMapper)` takes the mapper from the caller — the API module
+does not instantiate Jackson itself. On both fake and production, pass the agent's shared
+mapper via `agent.getTools().objectMapper()`:
 
 ```java
-Ack ack = agent.webhook().lastCall().response().as(Ack.class);
+Ack ack = agent.webhook().lastCall().response()
+        .as(Ack.class, agent.getTools().objectMapper());
 ```
 
-Throws `WebhookResponseException` on `null` body, invalid JSON, or type mismatch. For generic
-types (`List<Foo>`, `Map<String, Bar>`), call `.body()` and parse yourself — a `TypeReference`
-overload is on the V1.1 shortlist.
+The harness's `FakeAgentExtension` supplies a vanilla `JsonMapper.builder().build()` through
+`getTools()` — sufficient for most tests. If your production code configures the agent's
+mapper with modules (`JavaTimeModule`, custom deserialisers) and you want tests to see the
+same behaviour, inject your own `ObjectMapper` into the fake path explicitly (register the
+mapper as a bean via `.bean(...)` and have the controller autowire it instead of going
+through `agent.getTools()`).
+
+Throws `WebhookResponseException` on `null` type / mapper / body, invalid JSON, or type
+mismatch. For generic types (`List<Foo>`, `Map<String, Bar>`), call `.body()` and invoke
+`ObjectMapper#readValue` with a `TypeReference` directly.
 
 ## What the harness exposes
 

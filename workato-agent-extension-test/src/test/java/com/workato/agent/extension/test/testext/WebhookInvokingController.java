@@ -56,14 +56,16 @@ public class WebhookInvokingController {
     }
 
     /**
-     * POST /fire-and-parse — sends a payload and deserializes the response via {@code WebhookResponse.as}.
+     * POST /fire-and-parse — sends a payload and deserializes the response via
+     * {@code WebhookResponse.as(Class, ObjectMapper)}, passing the agent-provided mapper from
+     * {@code AgentToolsV1}.
      */
     @PostMapping(value = "/fire-and-parse", produces = MediaType.APPLICATION_JSON_VALUE)
     public Map<String, Object> fireAndParse(@RequestBody Map<String, Object> payload) {
         AgentWebhookV1.WebhookResponse resp = agent.webhook()
                 .send("https://recipe/webhook", payload,
                         Map.of("X-Request-ID", UUID.randomUUID().toString()));
-        Ack ack = resp.as(Ack.class);
+        Ack ack = resp.as(Ack.class, agent.getTools().objectMapper());
         return Map.of("delivered", true, "ackId", ack.id(), "ackCode", ack.code());
     }
 

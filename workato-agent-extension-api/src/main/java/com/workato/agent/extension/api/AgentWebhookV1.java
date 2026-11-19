@@ -62,10 +62,12 @@ import java.util.function.Predicate;
  *       The extension decides whether to treat it as fatal.</li>
  *   <li>A non-retry'able network error, or a retry'able error after all attempts have been
  *       exhausted, raises {@link WebhookDeliveryException}.</li>
- *   <li>{@link WebhookResponse#as(Class)} raises {@link WebhookResponseException} when the body
- *       cannot be parsed into the requested type — delivery succeeded but the payload is
- *       unusable. The two exception types are intentionally distinct so {@code catch} blocks
- *       can discriminate between "delivery failed" and "response unparseable".</li>
+ *   <li>{@link WebhookResponse#as(Class, ObjectMapper)} raises {@link WebhookResponseException}
+ *       when the body cannot be parsed into the requested type — delivery succeeded but the
+ *       payload is unusable. The two exception types are intentionally distinct so {@code catch}
+ *       blocks can discriminate between "delivery failed" and "response unparseable". The mapper
+ *       is caller-supplied — pass {@code agent.getTools().objectMapper()} for agent-consistent
+ *       Jackson configuration.</li>
  * </ul>
  *
  * <h2>Configuration</h2>
@@ -183,19 +185,6 @@ public interface AgentWebhookV1 {
             Duration elapsed) {
 
         /**
-         * Shared ObjectMapper used by {@link #as(Class)}. Jackson databind is a {@code compileOnly}
-         * dependency of {@code extension-api} — at runtime the hosting Spring environment always
-         * provides it, so extensions never need to shade it.
-         *
-         * <p>Default Jackson configuration is deliberate: no custom modules, no feature toggles.
-         * An extension that needs a differently-tuned mapper (e.g., strict unknown-property
-         * handling, Java-time module, custom deserializers) should call {@code as(String.class)}
-         * and run the body through its own {@link ObjectMapper} — there is no API for swapping
-         * this one out.
-         */
-        private static final ObjectMapper MAPPER = new ObjectMapper();
-
-        /**
          * Canonical constructor — defensive-copies {@code headers} into an unmodifiable map and
          * normalises {@code elapsed} to {@link Duration#ZERO} when {@code null}, so instances are
          * safe to retain and compare.
@@ -217,28 +206,36 @@ public interface AgentWebhookV1 {
         }
 
         /**
-         * Deserialize {@link #body()} as JSON into the given type.
+         * Deserialize {@link #body()} as JSON into the given type using the supplied
+         * {@link ObjectMapper}. The mapper is caller-supplied so the API module does not bake a
+         * Jackson configuration into the public contract — pass
+         * {@code agent.getTools().objectMapper()} to use the agent's shared instance (recommended),
+         * or any locally-configured mapper for customised behaviour.
          *
          * <p>Suitable for simple record / POJO types (including {@code Map<String, Object>} via
-         * {@code as(Map.class)}). For parameterised generic types ({@code List<Foo>},
-         * {@code Map<String, Bar>}) use {@code as(String.class)} and parse the body yourself, or
-         * wait for {@code as(TypeReference)} in a later release.
+         * {@code as(Map.class, mapper)}). For parameterised generic types ({@code List<Foo>},
+         * {@code Map<String, Bar>}) call {@link ObjectMapper#readValue} directly with a
+         * {@code TypeReference}.
          *
-         * @throws WebhookResponseException if {@link #body()} is {@code null}, is not valid JSON,
-         *                                  or does not match the requested type. When
+         * @throws WebhookResponseException if {@code type} or {@code mapper} is {@code null},
+         *                                  {@link #body()} is {@code null}, the body is not valid
+         *                                  JSON, or it does not match the requested type. When
          *                                  {@link #bodyTruncated()} is {@code true} the exception
          *                                  message points at truncation as the likely cause.
          */
-        public <T> T as(Class<T> type) {
+        public <T> T as(Class<T> type, ObjectMapper mapper) {
             if (type == null) {
                 throw new WebhookResponseException("type must not be null");
+            }
+            if (mapper == null) {
+                throw new WebhookResponseException("mapper must not be null");
             }
             if (body == null) {
                 throw new WebhookResponseException(
                         "Response body is null (status " + statusCode + "); nothing to deserialize");
             }
             try {
-                return MAPPER.readValue(body, type);
+                return mapper.readValue(body, type);
             } catch (Exception e) {
                 String hint = bodyTruncated
                         ? " (body was truncated — parsing a prefix will usually fail)"
@@ -407,10 +404,10 @@ public interface AgentWebhookV1 {
     }
 
     /**
-     * Thrown by {@link WebhookResponse#as(Class)} when the response body is {@code null}, is not
-     * valid JSON, or does not match the requested type. Distinct from
-     * {@link WebhookDeliveryException} so extensions can tell "delivery failed" from "response
-     * unparseable" in a {@code catch} block.
+     * Thrown by {@link WebhookResponse#as(Class, ObjectMapper)} when the arguments are invalid,
+     * the response body is {@code null}, is not valid JSON, or does not match the requested type.
+     * Distinct from {@link WebhookDeliveryException} so extensions can tell "delivery failed" from
+     * "response unparseable" in a {@code catch} block.
      *
      * <p>Unchecked, same reasoning as {@link WebhookDeliveryException}.
      */

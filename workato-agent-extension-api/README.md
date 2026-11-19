@@ -103,12 +103,22 @@ Every type lives in `com.workato.agent.extension.api`.
 ```java
 public interface AgentExtensionV1 {
     AgentExtensionContextV1 getContext();
+
+    AgentWebhookV1 webhook();
+
+    AgentToolsV1 getTools();
 }
 ```
 
 Autowire this. One instance exists per extension endpoint; it is scoped to
 your extension's isolated Spring context. The bean name is `"agentExtension"`,
 but you should autowire by type, not by name.
+
+- `getContext()` — your profile name and YAML configuration (see below).
+- `webhook()` — outbound HTTP transport (see `AgentWebhookV1` below).
+- `getTools()` — agent-provided utilities, currently a shared Jackson `ObjectMapper`
+  (see `AgentToolsV1` below). Use this mapper instead of constructing your own, so
+  your JSON handling matches the agent's.
 
 ### `AgentExtensionContextV1` — your endpoint's view of the agent
 
@@ -176,13 +186,18 @@ WebhookResponse resp = agent.webhook().send(url, payload);
 if(resp.
 
 isSuccessful()){
-Ack ack = resp.as(Ack.class);     // JSON → POJO/record via a shared Jackson ObjectMapper
+Ack ack = resp.as(Ack.class, agent.getTools().objectMapper());  // JSON → POJO/record
 }
 ```
 
-`WebhookResponse.as(Class<T>)` throws `WebhookResponseException` on `null` body, invalid JSON,
-or type mismatch. For `List<Foo>` / `Map<String, Bar>` generics, call `.body()` and parse the
-string yourself (a `TypeReference` overload is on the V1.1 shortlist).
+`WebhookResponse.as(Class<T>, ObjectMapper)` takes the mapper from the caller — pass
+`agent.getTools().objectMapper()` to use the agent's shared instance (recommended), or any
+locally-configured mapper. The API module itself does not instantiate Jackson, so Jackson stays
+a `compileOnly` dependency of `extension-api` and nothing is baked into the public contract.
+
+Throws `WebhookResponseException` on `null` type / mapper / body, invalid JSON, or type
+mismatch. For `List<Foo>` / `Map<String, Bar>` generics, call `.body()` and invoke
+`ObjectMapper#readValue` with a `TypeReference` directly.
 
 **Delivery semantics.**
 
@@ -327,6 +342,24 @@ public class WebhookSubscriptionController {
 }
 ```
 
+### `AgentToolsV1` — agent-provided utilities
+
+Obtained via `agent.getTools()`. A bag of references to instances the agent already owns, so
+extensions get production-identical behaviour without building (or shading) anything themselves.
+
+```java
+public interface AgentToolsV1 {
+    ObjectMapper objectMapper();   // tools.jackson.databind.ObjectMapper (Jackson 3)
+}
+```
+
+| Method           | What you get                                                                                                                                                                                                                                                                                           |
+|------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `objectMapper()` | The agent's shared `tools.jackson.databind.ObjectMapper`. Thread-safe; cache or use directly. Do **not** mutate (`registerModule`, feature toggles) — call `ObjectMapper.copy()` first if a local customisation is needed, otherwise the change leaks into every other extension and the agent itself. |
+
+The returned instance is a reference, not a copy. Jackson stays `compileOnly` in
+`extension-api`; extensions must **not** shade `tools.jackson.*` into their JARs.
+
 ### `AgentExtensionContextV1.AgentConfiguration` — map view of a YAML section
 
 Nested on `AgentExtensionContextV1`, so one `AgentExtensionContextV1` import is enough — the
@@ -442,9 +475,9 @@ before the legacy types are removed.
 
 The API is named `AgentExtensionV1` / `AgentExtensionContextV1` (with its nested
 `AgentConfiguration`) / `AgentWebhookV1` (with its nested `WebhookResponse`, `RetryPolicy`,
-`WebhookDeliveryException`, `WebhookResponseException`).
+`WebhookDeliveryException`, `WebhookResponseException`) / `AgentToolsV1`.
 
-- `AgentExtensionV1` and `AgentExtensionContextV1` are **consumer-only** —
+- `AgentExtensionV1`, `AgentExtensionContextV1`, and `AgentToolsV1` are **consumer-only** —
   customer code calls their methods but does not implement them (the
   implementation is supplied by the agent). Methods may be added to these
   interfaces without breaking customer compile or runtime, as long as the
@@ -455,7 +488,7 @@ The API is named `AgentExtensionV1` / `AgentExtensionContextV1` (with its nested
 - Incompatible changes will introduce a parallel `V2` family and keep `V1`
   running until a documented removal window.
 
-If you write a hand-rolled implementation of `AgentExtensionV1` or
-`AgentExtensionContextV1` for testing, prefer the harness in `extension-test`
-over implementing the interfaces directly — the harness is kept in sync as
+If you write a hand-rolled implementation of `AgentExtensionV1`,
+`AgentExtensionContextV1`, or `AgentToolsV1` for testing, prefer the harness in
+`extension-test` over implementing the interfaces directly — the harness is kept in sync as
 the interfaces evolve.
