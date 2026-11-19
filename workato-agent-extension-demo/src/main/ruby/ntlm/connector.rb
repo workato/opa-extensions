@@ -1,6 +1,6 @@
 # Workato custom connector for the NtlmExtension on-prem agent extension.
 #
-# Companion for: src/main/java/com/mycompany/onprem/NtlmExtension.java
+# Companion for: src/main/java/com/workato/agent/extension/demo/NtlmExtension.java
 # Agent endpoint: POST /ext/{profile}/request
 #   required headers:
 #     X-Workato-NTLM-auth : "username:password[@domain[/workstation]]"

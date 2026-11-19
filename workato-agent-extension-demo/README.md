@@ -8,14 +8,14 @@ custom connector. Per-extension documentation (what it does, what Extension
 API features it demonstrates, HTTP endpoints, YAML keys it reads) lives next
 to its Java class — follow the links.
 
-| Extension                                                             | What it demonstrates                                                                                                                                                                                                                     | HTTP surface                                                            |
-|-----------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
-| **[security](src/main/java/com/mycompany/onprem/security/README.md)** | The minimum-viable extension — `@Inject AgentExtensionV1`, YAML read via `getProfileConfiguration()`, one `@PostMapping` endpoint.                                                                                                       | `POST /computeDigest`                                                   |
-| **[ntlm](src/main/java/com/mycompany/onprem/ntlm/README.md)**         | `@Value("${…}")` property injection with defaults, lazy-init of a shared `HttpClient` (DCL pattern), `@RequestHeader`-driven inputs, forwarding upstream status via `HttpServletResponse`.                                               | `POST /request`                                                         |
-| **[timer](src/main/java/com/mycompany/onprem/timer/README.md)**       | **`AgentWebhookV1.send(...)`** with per-profile retry policy, `webhook_subscribe` / `_unsubscribe` HTTP contract, Jackson records with `@JsonProperty`, background `ScheduledExecutorService` with `DisposableBean.destroy()` lifecycle. | `GET /webhook/health`, `POST /webhook/{subscribe,unsubscribe,fire_now}` |
+| Extension                                                                         | What it demonstrates                                                                                                                                                                                                                     | HTTP surface                                                            |
+|-----------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
+| **[security](src/main/java/com/workato/agent/extension/demo/security/README.md)** | The minimum-viable extension — `@Inject AgentExtensionV1`, YAML read via `getProfileConfiguration()`, one `@PostMapping` endpoint.                                                                                                       | `POST /computeDigest`                                                   |
+| **[ntlm](src/main/java/com/workato/agent/extension/demo/ntlm/README.md)**         | `@Value("${…}")` property injection with defaults, lazy-init of a shared `HttpClient` (DCL pattern), `@RequestHeader`-driven inputs, forwarding upstream status via `HttpServletResponse`.                                               | `POST /request`                                                         |
+| **[timer](src/main/java/com/workato/agent/extension/demo/timer/README.md)**       | **`AgentWebhookV1.send(...)`** with per-profile retry policy, `webhook_subscribe` / `_unsubscribe` HTTP contract, Jackson records with `@JsonProperty`, background `ScheduledExecutorService` with `DisposableBean.destroy()` lifecycle. | `GET /webhook/health`, `POST /webhook/{subscribe,unsubscribe,fire_now}` |
 
 Add a new extension by cloning any of the three subdirectories under
-`src/main/java/com/mycompany/onprem/` and following the six-step **Development
+`src/main/java/com/workato/agent/extension/demo/` and following the six-step **Development
 workflow** below.
 
 ## Configuration
@@ -66,7 +66,7 @@ troubleshooting.
 ```
 ┌────────────────────────────────┐                         ┌──────────────────────────────────┐
 │ 1. Java extension class        │  src/main/java/com/     │ 2. AgentExtensionHarness tests   │
-│    (Spring @RestController)    │  mycompany/onprem/      │    (Spring MockMvc, no agent,    │
+│    (Spring @RestController)    │  workato/agent/extension/demo/      │    (Spring MockMvc, no agent,    │
 │                                │     <name>/             │     no network)                  │
 └───────────────┬────────────────┘                         └────────────────┬─────────────────┘
                 │                                                           │
@@ -94,7 +94,7 @@ troubleshooting.
 
 ### Step 1 — Write the Java extension class
 
-Put the controller under `src/main/java/com/mycompany/onprem/<name>/` along
+Put the controller under `src/main/java/com/workato/agent/extension/demo/<name>/` along
 with a `README.md` next to it (what it does + which Extension API features it
 demonstrates — mirror the shape of the existing per-extension READMEs linked
 in **Available extensions**). It is a regular Spring `@RestController` the
@@ -109,7 +109,7 @@ helpers in step 5 (`Ref1..Ref10` do not declare `throws`).
 
 ### Step 2 — Unit-test the controller with `AgentExtensionHarness` (no OPA)
 
-Add `<Name>Test` under `src/test/java/com/mycompany/onprem/<name>/`. The
+Add `<Name>Test` under `src/test/java/com/workato/agent/extension/demo/<name>/`. The
 harness wires your controller into a hermetic Spring `MockMvc` context — no
 Jetty, no classloader isolation, no network. It takes milliseconds and runs
 on every `./gradlew test`.
@@ -148,7 +148,7 @@ cassettes, re-recording against a live agent, cleanup before commit): see
 
 ### Step 5 — Integration-test against a real OPA (`DeployedAgentLauncher`)
 
-Add `<Name>DeployedTest` under `src/test/java/com/mycompany/onprem/<name>/`.
+Add `<Name>DeployedTest` under `src/test/java/com/workato/agent/extension/demo/<name>/`.
 This is the first step that touches an actual agent on disk. The launcher
 loads the dist's own `agent-core` + `extension-api` via an isolated
 `URLClassLoader`, drops your extension class into it, writes a merged
@@ -245,7 +245,7 @@ Steps to build an extension:
 The `jar` task produces a **minimal fat jar** — it bundles only the Apache
 libraries that extension code actually imports (today: `commons-codec` for
 `Hex`, `commons-lang3` for `StringUtils`), plus our own classes under
-`com/mycompany/onprem/`. Everything else the agent provides at runtime —
+`com/workato/agent/extension/demo/`. Everything else the agent provides at runtime —
 `extension-api`, Spring, Jackson, Jakarta, SLF4J, Apache HttpClient — is
 declared `compileOnly` in `build.gradle` and is **not** shaded. Packaging
 what the agent already loads would cause classloader conflicts (see
@@ -300,7 +300,7 @@ Useful standalone Gradle tasks:
 ## Java extension tests
 
 Unit tests for the on-prem extensions live under
-`src/test/java/com/mycompany/onprem/`. They run against the **mock Extension
+`src/test/java/com/workato/agent/extension/demo/`. They run against the **mock Extension
 API** shipped as `extension-test-<version>.jar` — no running agent, no
 classloader isolation, no Jetty. The authoritative reference for the mock
 harness itself is

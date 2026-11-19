@@ -93,9 +93,9 @@ conventions.
     ├── README.md                      # ← customer-facing six-step walkthrough
     ├── CLAUDE.md                      # ← demo-specific conventions (dep scoping, Ruby, DeployedTest)
     └── src/
-        ├── main/java/com/mycompany/onprem/{security,ntlm,timer}/
+        ├── main/java/com/workato/agent/extension/demo/{security,ntlm,timer}/
         ├── main/ruby/{security,ntlm,timer}/connector.rb
-        ├── test/java/com/mycompany/onprem/{security,ntlm,timer}/
+        ├── test/java/com/workato/agent/extension/demo/{security,ntlm,timer}/
         ├── test/resources/extensions/*.yml          # YAML fixtures for AgentExtensionHarness
         ├── test/resources/tape_library/*/           # VCR cassettes for Ruby RSpec
         └── test/ruby/                               # Shared Gemfile + per-connector specs

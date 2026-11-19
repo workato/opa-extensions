@@ -129,7 +129,7 @@ extensions:
 
 ## Workato connector
 
-Companion Ruby connector: [`src/main/ruby/timer/connector.rb`](../../../../../main/ruby/timer/connector.rb).
+Companion Ruby connector: [`src/main/ruby/timer/connector.rb`](../../../../../../../ruby/timer/connector.rb).
 Exposes the trigger `tick` (full `webhook_subscribe` / `_notification` /
 `_unsubscribe` lambdas) and an `fire_now` action for one-shot delivery. The
 connector caches `connection_id` inside the subscribe-output hash so

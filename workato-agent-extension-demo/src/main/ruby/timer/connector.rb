@@ -1,6 +1,6 @@
 # Workato custom connector for the TimerExtension on-prem agent extension.
 #
-# Companion for: src/main/java/com/mycompany/onprem/timer/TimerExtension.java
+# Companion for: src/main/java/com/workato/agent/extension/demo/timer/TimerExtension.java
 # Agent endpoints (all under /ext/{profile}/webhook/):
 #   GET  health      — liveness check (used by the connection test lambda)
 #   POST subscribe   — register a periodic timer, returns {"id": "<uuid>"}

@@ -15,7 +15,7 @@ custom connectors that talk to them. Exists for two reasons:
    up as broken demo tests on the next build.
 2. **Reference for customer teams.** A new extension author should be able
    to clone one of the three subdirectories under
-   `src/main/java/com/mycompany/onprem/<name>/`, follow the six-step
+   `src/main/java/com/workato/agent/extension/demo/<name>/`, follow the six-step
    development workflow in `README.md`, and ship.
 
 This module is **not** published to Nexus — only `workato-agent-extension-api`
@@ -154,7 +154,7 @@ Current connectors (deliverable → test project):
 
 ### Writing Java tests
 
-- Tests live under `src/test/java/com/mycompany/onprem/`.
+- Tests live under `src/test/java/com/workato/agent/extension/demo/`.
 - JUnit 5 Jupiter. The Extension API mock harness is on the test classpath via
   `project(':workato-agent-extension-test')` → see
   [`../workato-agent-extension-test/README.md`](../workato-agent-extension-test/README.md)
@@ -164,9 +164,9 @@ Current connectors (deliverable → test project):
 
 ### Mandatory `*DeployedTest` for every extension
 
-Every extension under `src/main/java/com/mycompany/onprem/<name>/` **must**
+Every extension under `src/main/java/com/workato/agent/extension/demo/<name>/` **must**
 have a companion `<Name>ExtensionDeployedTest.java` under
-`src/test/java/com/mycompany/onprem/<name>/` that runs the extension inside
+`src/test/java/com/workato/agent/extension/demo/<name>/` that runs the extension inside
 the real agent via `DeployedAgentLauncher` (see
 [`../workato-agent-extension-test/README.md`](../workato-agent-extension-test/README.md)
 → "Running against the real agent"). This is the only test type that

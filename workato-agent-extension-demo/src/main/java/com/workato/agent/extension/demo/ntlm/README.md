@@ -64,7 +64,7 @@ extensions:
 
 ## Workato connector
 
-Companion Ruby connector: [`src/main/ruby/ntlm/connector.rb`](../../../../../main/ruby/ntlm/connector.rb).
+Companion Ruby connector: [`src/main/ruby/ntlm/connector.rb`](../../../../../../../ruby/ntlm/connector.rb).
 Credentials live in the Workato connection (not in each action input), get
 assembled into the `X-Workato-NTLM-auth` header via a shared connector
 `method`, and the target URL is the action's one input field.

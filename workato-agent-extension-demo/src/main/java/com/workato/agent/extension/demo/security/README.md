@@ -60,6 +60,6 @@ extensions:
 
 ## Workato connector
 
-Companion Ruby connector: [`src/main/ruby/security/connector.rb`](../../../../../main/ruby/security/connector.rb).
+Companion Ruby connector: [`src/main/ruby/security/connector.rb`](../../../../../../../ruby/security/connector.rb).
 It exposes one action (`sha256_digest`) that forwards `{payload}` to this
 endpoint and surfaces the returned signature.

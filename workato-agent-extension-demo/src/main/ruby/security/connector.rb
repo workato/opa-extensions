@@ -1,6 +1,6 @@
 # Workato custom connector for the SecurityExtension on-prem agent extension.
 #
-# Companion for: src/main/java/com/mycompany/onprem/SecurityExtension.java
+# Companion for: src/main/java/com/workato/agent/extension/demo/SecurityExtension.java
 # Agent endpoint: POST /ext/{profile}/computeDigest
 #   request  : { "payload": "<string>" }
 #   response : { "signature": "<64-char lowercase hex of SHA-256(secret || payload)>" }
