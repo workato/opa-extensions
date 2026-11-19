@@ -60,25 +60,25 @@ class NtlmExtensionTest {
     }
 
     @Test
-    void malformedCredentialsSkipHttpCallEntirely() throws Exception {
+    void malformedCredentialsReturn401() throws Exception {
         MvcResult result = agent.mockMvc().perform(post(agent.urlFor("/request"))
                         .header("X-Workato-NTLM-auth", "no-colon-no-at")
                         .header("X-Workato-NTLM-url", upstream.urlFor("/ok")))
                 .andReturn();
 
-        assertEquals(200, result.getResponse().getStatus());
+        assertEquals(401, result.getResponse().getStatus());
         assertEquals("", result.getResponse().getContentAsString());
         assertEquals(0, upstream.okHits.get(), "upstream must not be contacted when credentials are malformed");
     }
 
     @Test
-    void emptyCredentialSplitSkipsHttpCall() throws Exception {
+    void emptyCredentialSplitReturns401() throws Exception {
         MvcResult result = agent.mockMvc().perform(post(agent.urlFor("/request"))
                         .header("X-Workato-NTLM-auth", "user-only-no-colon@DOMAIN")
                         .header("X-Workato-NTLM-url", upstream.urlFor("/ok")))
                 .andReturn();
 
-        assertEquals(200, result.getResponse().getStatus());
+        assertEquals(401, result.getResponse().getStatus());
         assertEquals("", result.getResponse().getContentAsString());
         assertEquals(0, upstream.okHits.get(), "upstream must not be contacted when password is missing");
     }

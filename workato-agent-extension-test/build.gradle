@@ -43,11 +43,15 @@ dependencies {
     // customers writing assertions on the raw response.
     api 'jakarta.servlet:jakarta.servlet-api'
 
-    // Jackson 3 — default message converter in Spring MVC, matching the agent's production behaviour.
+    // Jackson 3 — default message converter in Spring MVC. Public types in the harness expose
+    // ObjectMapper via FakeAgentExtension.getTools() and WebhookResponse.as(Class, ObjectMapper),
+    // so the dependency has to be `api`.
     api 'tools.jackson.core:jackson-databind'
 
     // YAML support — the harness reads an extension's YAML section the same way the agent does.
-    api 'tools.jackson.dataformat:jackson-dataformat-yaml'
+    // Internal implementation detail of `.yaml(resource)` — no public type returns a YAML-specific
+    // Jackson class, so `implementation` keeps it off customers' compile classpath.
+    implementation 'tools.jackson.dataformat:jackson-dataformat-yaml'
 
     // JUnit 5 is a required api dependency because the harness exposes a JUnit 5
     // BeforeAllCallback/AfterAllCallback for the @RegisterExtension integration path.

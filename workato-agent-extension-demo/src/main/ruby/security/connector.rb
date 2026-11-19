@@ -25,9 +25,11 @@
     authorization: { type: 'none' }
   },
 
+  # Connection test — hits the side-effect-free /ping endpoint rather than /computeDigest,
+  # so repeated connection tests never exercise the signing path (no SHA-256 CPU, no secret
+  # access, no audit-log entries if the extension ever grows any).
   test: ->(connection) {
-    post("http://localhost/ext/#{connection['profile']}/computeDigest",
-         payload: 'ping')
+    get("http://localhost/ext/#{connection['profile']}/ping")
       .headers('X-Workato-Connector': 'enforce')
   },
 

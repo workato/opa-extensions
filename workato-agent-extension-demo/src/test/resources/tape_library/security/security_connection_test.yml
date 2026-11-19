@@ -1,8 +1,8 @@
 ---
 http_interactions:
   - request:
-      method: post
-      uri: http://localhost/ext/security/computeDigest
+      method: get
+      uri: http://localhost/ext/security/ping
       body:
         encoding: UTF-8
         string: ''
@@ -16,7 +16,7 @@ http_interactions:
           - application/json
       body:
         encoding: UTF-8
-        string: '{"signature":"0000000000000000000000000000000000000000000000000000000000000000"}'
+        string: '{"ok":true}'
       http_version: '1.1'
     recorded_at: Thu, 15 Oct 2026 10:00:00 GMT
 recorded_with: VCR 6.3.1

@@ -149,15 +149,21 @@
 
       webhook_unsubscribe: lambda do |webhook_subscribe_output|
         post('webhook/unsubscribe').payload(
-          recipe_id: webhook_subscribe_output['id'],
+          # The extension keyed the subscription under the UUID it minted at /subscribe time and
+          # echoed back as `id`. Carry that through verbatim as `subscription_id` — matches the
+          # field name UnsubscribeRequest@JsonProperty reads on the Java side.
+          subscription_id: webhook_subscribe_output['id'],
           connection_id: webhook_subscribe_output['connection_id']
         ).after_error_response(/.*/) do |_code, body, _headers, message|
           error("Failed to unsubscribe webhook: #{message}. Response: #{body}")
         end
       end,
 
+      # Compose the dedup key from the two load-bearing identifiers the extension already provides.
+      # `fetch` instead of `[]` so a missing field surfaces loudly during recipe testing rather
+      # than silently collapsing distinct events into the key `"-"`.
       dedup: lambda do |payload|
-        "#{payload['subscription_id']}-#{payload['tick']}"
+        "#{payload.fetch('subscription_id')}-#{payload.fetch('tick')}"
       end,
 
       output_fields: lambda do |object_definitions|

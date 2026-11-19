@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -42,7 +43,7 @@ public class WebhookInvokingController {
     public Map<String, Object> fireWithHeaders(@RequestBody Map<String, Object> payload) {
         agent.webhook().send(
                 "https://recipe/webhook", payload,
-                Map.of("X-Request-ID", "fixed-id-for-test"));
+                Map.of("X-Request-ID", List.of("fixed-id-for-test")));
         return Map.of("delivered", true);
     }
 
@@ -64,7 +65,7 @@ public class WebhookInvokingController {
     public Map<String, Object> fireAndParse(@RequestBody Map<String, Object> payload) {
         AgentWebhookV1.WebhookResponse resp = agent.webhook()
                 .send("https://recipe/webhook", payload,
-                        Map.of("X-Request-ID", UUID.randomUUID().toString()));
+                        Map.of("X-Request-ID", List.of(UUID.randomUUID().toString())));
         Ack ack = resp.as(Ack.class, agent.getTools().objectMapper());
         return Map.of("delivered", true, "ackId", ack.id(), "ackCode", ack.code());
     }

@@ -180,10 +180,16 @@ final class ControllerMethodResolver {
 
     private static String interpolatePathVariables(String template, Method method, Object[] pathVars) {
         List<Parameter> pvParams = pathVariableParams(method);
-        if (pvParams.size() != pathVars.length) {
+        // Too few path-var values is unambiguously a caller bug: the route template will contain
+        // unresolved {name} placeholders and MockMvc will 404. Rejecting loudly beats a mystery 404.
+        if (pathVars.length < pvParams.size()) {
             throw new IllegalArgumentException("Method " + method.getName() + " declares "
-                    + pvParams.size() + " @PathVariable parameter(s), but " + pathVars.length + " value(s) were supplied");
+                    + pvParams.size() + " @PathVariable parameter(s), but only " + pathVars.length + " value(s) were supplied");
         }
+        // Extra values are tolerated — a common case is a controller with @PathVariable + @RequestBody
+        // (two parameters total) bound through Ref1, where the harness-generated method reference
+        // literal does not reveal which one is the path var. Accept extra pathVars beyond the number
+        // of @PathVariable params: they are no-ops for the URL substitution below.
         String result = template;
         for (int i = 0; i < pvParams.size(); i++) {
             Parameter p = pvParams.get(i);

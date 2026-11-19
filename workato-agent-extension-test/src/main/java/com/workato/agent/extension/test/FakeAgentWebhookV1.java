@@ -8,9 +8,7 @@ import com.workato.agent.extension.api.AgentWebhookV1;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Predicate;
 
@@ -79,8 +77,18 @@ public final class FakeAgentWebhookV1 implements AgentWebhookV1 {
         return StubOutcome.ofResponse(new WebhookResponse(200, "{}", false, Map.of(), 1, Duration.ZERO));
     }
 
-    private static Map<String, String> safeHeaders(Map<String, String> headers) {
-        return headers == null ? Map.of() : Map.copyOf(headers);
+    private static Map<String, List<String>> safeHeaders(Map<String, List<String>> headers) {
+        if (headers == null || headers.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, List<String>> copy = new LinkedHashMap<>(headers.size());
+        for (Map.Entry<String, List<String>> e : headers.entrySet()) {
+            List<String> values = e.getValue();
+            copy.put(e.getKey(), values == null
+                    ? List.of()
+                    : Collections.unmodifiableList(new ArrayList<>(values)));
+        }
+        return Collections.unmodifiableMap(copy);
     }
 
     // ----- wakeup ladder (AgentWebhookV1) ---------------------------------------------------
@@ -99,7 +107,7 @@ public final class FakeAgentWebhookV1 implements AgentWebhookV1 {
     }
 
     @Override
-    public WebhookResponse send(String url, Object jsonBody, Map<String, String> headers) {
+    public WebhookResponse send(String url, Object jsonBody, Map<String, List<String>> headers) {
         return send(url, jsonBody, defaultPolicy, headers);
     }
 
@@ -111,7 +119,11 @@ public final class FakeAgentWebhookV1 implements AgentWebhookV1 {
     // ----- introspection (AgentWebhookV1) ---------------------------------------------------
 
     @Override
-    public WebhookResponse send(String url, Object jsonBody, RetryPolicy policy, Map<String, String> headers) {
+    public WebhookResponse send(String url, Object jsonBody, RetryPolicy policy, Map<String, List<String>> headers) {
+        if (jsonBody == null) {
+            throw new IllegalArgumentException(
+                    "jsonBody must not be null; pass Map.of() or \"\" explicitly for an empty payload");
+        }
         return executeWithRetry(CallKind.SEND, url, jsonBody, safeHeaders(headers), requireNonNullPolicy(policy));
     }
 
@@ -123,7 +135,7 @@ public final class FakeAgentWebhookV1 implements AgentWebhookV1 {
     // ----- call observation --------------------------------------------------------------------
 
     @Override
-    public WebhookResponse wakeup(String url, Map<String, String> headers) {
+    public WebhookResponse wakeup(String url, Map<String, List<String>> headers) {
         return wakeup(url, defaultPolicy, headers);
     }
 
@@ -133,7 +145,7 @@ public final class FakeAgentWebhookV1 implements AgentWebhookV1 {
     }
 
     @Override
-    public WebhookResponse wakeup(String url, RetryPolicy policy, Map<String, String> headers) {
+    public WebhookResponse wakeup(String url, RetryPolicy policy, Map<String, List<String>> headers) {
         return executeWithRetry(CallKind.WAKEUP, url, null, safeHeaders(headers), requireNonNullPolicy(policy));
     }
 
@@ -241,7 +253,7 @@ public final class FakeAgentWebhookV1 implements AgentWebhookV1 {
     }
 
     private WebhookResponse executeWithRetry(CallKind kind, String url, Object body,
-                                             Map<String, String> headers, RetryPolicy policy) {
+                                             Map<String, List<String>> headers, RetryPolicy policy) {
         if (url == null) {
             throw new IllegalArgumentException("url must not be null");
         }
@@ -367,7 +379,7 @@ public final class FakeAgentWebhookV1 implements AgentWebhookV1 {
             CallKind kind,
             String url,
             Object body,
-            Map<String, String> headers,
+            Map<String, List<String>> headers,
             RetryPolicy policy,
             Instant timestamp,
             int attemptNumber,

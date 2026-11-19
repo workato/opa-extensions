@@ -77,7 +77,13 @@ test {
 //  agent provides it at runtime; shading would cause classloader conflicts").
 // ---------------------------------------------------------------------------
 jar {
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    // On CI we want duplicates to be LOUD (two libs both shipping e.g.
+    // META-INF/services/jakarta.servlet.ServletContainerInitializer is a classpath bug worth
+    // knowing about). Locally we silently drop duplicates — first-wins — so an interactive
+    // `./gradlew build` does not fail on a known-collision while the author is iterating.
+    duplicatesStrategy = (System.getenv('CI') == 'true' || project.hasProperty('ci'))
+            ? DuplicatesStrategy.WARN
+            : DuplicatesStrategy.EXCLUDE
     from {
         configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
     }

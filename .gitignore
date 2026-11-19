@@ -2,3 +2,10 @@
 /.idea/
 build/
 /temp/run.sh
+*.iml
+.vscode/
+.DS_Store
+hs_err_pid*.log
+replay_pid*.log
+.env
+.env.*

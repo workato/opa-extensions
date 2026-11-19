@@ -10,9 +10,9 @@ import jakarta.inject.Inject;
 import org.apache.commons.codec.binary.Hex;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -27,6 +27,15 @@ public class SecurityExtension {
 
     @Inject
     private AgentExtensionV1 agent;
+
+    /**
+     * Cheap, side-effect-free health probe. Use this (not {@code /computeDigest}) as the connector's
+     * {@code test:} lambda so the connection test does not exercise the signing path.
+     */
+    @GetMapping("/ping")
+    public Map<String, Object> ping() {
+        return Map.of("ok", true);
+    }
 
     @PostMapping("/computeDigest")
     public Map<String, Object> computeDigest(@RequestBody Map<String, Object> body) {
@@ -43,9 +52,15 @@ public class SecurityExtension {
             throw new IllegalStateException("'signing-secret' is not configured for profile " + profile);
         }
 
-        String payload = (String) body.get("payload");
-        log.debug("[{}] computing digest for payload of {} chars",
-                profile, payload == null ? 0 : payload.length());
+        Object rawPayload = body == null ? null : body.get("payload");
+        if (!(rawPayload instanceof String payload)) {
+            // Catches both `null` (NPE on getBytes) and non-String (ClassCastException) —
+            // surfaces as 400 via the @ExceptionHandler below instead of a 500 stack trace.
+            throw new IllegalArgumentException(
+                    "'payload' is required and must be a string; got " +
+                            (rawPayload == null ? "null" : rawPayload.getClass().getSimpleName()));
+        }
+        log.debug("[{}] computing digest for payload of {} chars", profile, payload.length());
 
         MessageDigest digest;
         try {
@@ -59,5 +74,11 @@ public class SecurityExtension {
         digest.update(secret.toString().getBytes(StandardCharsets.UTF_8));
         byte[] result = digest.digest(payload.getBytes(StandardCharsets.UTF_8));
         return Collections.singletonMap("signature", Hex.encodeHexString(result));
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    ResponseEntity<Map<String, Object>> badRequest(IllegalArgumentException e) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("error", e.getMessage()));
     }
 }

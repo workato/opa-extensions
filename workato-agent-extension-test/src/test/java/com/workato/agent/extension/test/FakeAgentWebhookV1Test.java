@@ -368,8 +368,15 @@ class FakeAgentWebhookV1Test {
 
         @Test
         void customHeadersAppearInCallLog() {
-            api.send(URL, "x", Map.of("X-Request-ID", "req-1"));
-            assertEquals(Map.of("X-Request-ID", "req-1"), api.lastCall().headers());
+            api.send(URL, "x", Map.of("X-Request-ID", List.of("req-1")));
+            assertEquals(Map.of("X-Request-ID", List.of("req-1")), api.lastCall().headers());
+        }
+
+        @Test
+        void multiValueHeadersPreserveOrder() {
+            api.send(URL, "x", Map.of("Accept", List.of("application/json", "text/plain")));
+            assertEquals(List.of("application/json", "text/plain"),
+                    api.lastCall().headers().get("Accept"));
         }
 
         @Test
@@ -380,8 +387,13 @@ class FakeAgentWebhookV1Test {
 
         @Test
         void nullHeadersBecomeEmpty() {
-            api.send(URL, "x", (Map<String, String>) null);
+            api.send(URL, "x", (Map<String, List<String>>) null);
             assertEquals(Map.of(), api.lastCall().headers());
+        }
+
+        @Test
+        void nullBodyIsRejected() {
+            assertThrows(IllegalArgumentException.class, () -> api.send(URL, null));
         }
     }
 }

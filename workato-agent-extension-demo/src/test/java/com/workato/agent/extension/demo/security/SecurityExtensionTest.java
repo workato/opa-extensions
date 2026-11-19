@@ -96,6 +96,40 @@ class SecurityExtensionTest {
     }
 
     @Test
+    void missingPayloadFieldReturns400() throws Exception {
+        MvcResult res = agent.mockMvc()
+                .perform(post(agent.urlFor("/computeDigest"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andReturn();
+        assertEquals(400, res.getResponse().getStatus());
+        assertTrue(res.getResponse().getContentAsString().contains("payload"));
+    }
+
+    @Test
+    void nonStringPayloadReturns400() throws Exception {
+        MvcResult res = agent.mockMvc()
+                .perform(post(agent.urlFor("/computeDigest"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"payload\":42}"))
+                .andReturn();
+        assertEquals(400, res.getResponse().getStatus());
+        assertTrue(res.getResponse().getContentAsString().toLowerCase().contains("integer")
+                        || res.getResponse().getContentAsString().toLowerCase().contains("string"),
+                "error should mention the type mismatch, got: " + res.getResponse().getContentAsString());
+    }
+
+    @Test
+    void pingReturnsOk() throws Exception {
+        MvcResult res = agent.mockMvc()
+                .perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .get(agent.urlFor("/ping")))
+                .andReturn();
+        assertEquals(200, res.getResponse().getStatus());
+        assertTrue(res.getResponse().getContentAsString().contains("ok"));
+    }
+
+    @Test
     void missingSecretRaisesIllegalStateCarryingProfileName() {
         AgentExtensionHarness noSecret = AgentExtensionHarness.extension("security-no-secret")
                 .controller(SecurityExtension.class)

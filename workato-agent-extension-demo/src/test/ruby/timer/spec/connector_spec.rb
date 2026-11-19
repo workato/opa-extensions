@@ -70,7 +70,7 @@ RSpec.describe 'onprem timer connector' do
       expect(event).to eq(payload)
     end
 
-    it 'webhook_unsubscribe posts recipe_id (= subscription id) and connection_id' do
+    it 'webhook_unsubscribe posts subscription_id and connection_id' do
       VCR.use_cassette('unsubscribe') do
         expect {
           connector.triggers.tick.webhook_unsubscribe(
@@ -85,6 +85,18 @@ RSpec.describe 'onprem timer connector' do
       key2 = connector.triggers.tick.dedup({ 'subscription_id' => 'sub-abc', 'tick' => 7 })
       expect(key1).to eq('sub-abc-7')
       expect(key1).to eq(key2)
+    end
+
+    it 'dedup raises on missing subscription_id instead of collapsing to "-tick"' do
+      expect {
+        connector.triggers.tick.dedup({ 'tick' => 7 })
+      }.to raise_error(KeyError)
+    end
+
+    it 'dedup raises on missing tick instead of collapsing to "sub-"' do
+      expect {
+        connector.triggers.tick.dedup({ 'subscription_id' => 'sub-abc' })
+      }.to raise_error(KeyError)
     end
   end
 end

@@ -111,7 +111,7 @@ class AgentExtensionContextV1Test extends AbstractExtensionTest {
 
     @Test
     void getProfileConfiguration_rejectsPutAll() {
-        assertThatThrownBy(() -> configuration().put("x", 1))
+        assertThatThrownBy(() -> configuration().putAll(java.util.Map.of("x", 1, "y", 2)))
                 .isInstanceOf(UnsupportedOperationException.class);
     }
 

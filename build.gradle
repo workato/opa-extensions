@@ -27,6 +27,14 @@ subprojects {
     java {
         sourceCompatibility = 21
         targetCompatibility = 21
+        // Make Gradle enforce the compiler JDK, not just the bytecode target. On a developer
+        // laptop with a default JDK newer than 21 (25, 26, …) the setCompatibility pair above
+        // would silently let the build run under a newer compiler against the older bytecode
+        // level — fine in most cases, surprising when it isn't. CI already pins JDK 21
+        // explicitly; this line gives local builds the same guarantee.
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(21)
+        }
     }
 
     tasks.withType(JavaCompile).configureEach {

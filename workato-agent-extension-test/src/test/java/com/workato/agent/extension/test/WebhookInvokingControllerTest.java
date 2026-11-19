@@ -15,6 +15,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -61,7 +62,7 @@ class WebhookInvokingControllerTest extends AbstractExtensionTest {
                 .content("{\"a\":2}"));
 
         assertEquals(200, status(result));
-        assertEquals(Map.of("X-Request-ID", "fixed-id-for-test"),
+        assertEquals(Map.of("X-Request-ID", List.of("fixed-id-for-test")),
                 agent.webhook().lastCall().headers());
     }
 

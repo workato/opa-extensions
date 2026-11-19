@@ -39,7 +39,7 @@ RSpec.describe 'onprem security connector' do
   end
 
   describe 'test' do
-    it 'pings the computeDigest endpoint without raising' do
+    it 'pings the /ping endpoint without raising' do
       VCR.use_cassette('security_connection_test') do
         expect { connector.test(settings) }.not_to raise_error
       end

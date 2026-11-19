@@ -174,7 +174,7 @@ class TimerExtensionTest {
 
         awaitAtLeast(agent, 1, Duration.ofSeconds(3));
         postJson(agent, "/webhook/unsubscribe",
-                MAPPER.writeValueAsString(Map.of("recipe_id", id, "connection_id", "conn-1")));
+                MAPPER.writeValueAsString(Map.of("subscription_id", id, "connection_id", "conn-1")));
 
         int n = agent.webhook().allCalls().size();
         // One period + a cushion — long enough for a stray tick to show up if cancel didn't take.

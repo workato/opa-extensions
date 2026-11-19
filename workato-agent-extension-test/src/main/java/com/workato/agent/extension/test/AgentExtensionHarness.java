@@ -97,6 +97,7 @@ public final class AgentExtensionHarness
     private Object controllerInstance;
     private ApplicationContext parentContext;
     private FakeAgentWebhookV1 webhook;
+    private boolean externalWebhook;
 
     private AnnotationConfigWebApplicationContext webContext;
     private MockMvc mockMvc;
@@ -307,6 +308,7 @@ public final class AgentExtensionHarness
             throw new IllegalArgumentException("webhook must not be null");
         }
         this.webhook = webhook;
+        this.externalWebhook = true;
         return this;
     }
 
@@ -332,6 +334,15 @@ public final class AgentExtensionHarness
         }
         if (webhook == null) {
             webhook = new FakeAgentWebhookV1();
+        }
+        else if (!externalWebhook) {
+            // We are re-entering start() on the same harness instance (class-level
+            // @RegisterExtension re-run, manual restart, …). Clear the carried-over call log /
+            // stubs so the next test sees a fresh fake; the reference itself is preserved so
+            // anything the test captured as `harness.webhook()` keeps working. An externally
+            // supplied webhook (via .webhook(FakeAgentWebhookV1)) is left untouched — its
+            // lifecycle belongs to the caller.
+            webhook.reset();
         }
 
         AnnotationConfigWebApplicationContext ctx = new AnnotationConfigWebApplicationContext();
@@ -366,6 +377,11 @@ public final class AgentExtensionHarness
 
     /**
      * Shut down the Spring context. Idempotent.
+     *
+     * <p>Does <b>not</b> clear the {@link FakeAgentWebhookV1} call log — a test that captures
+     * state after {@code stop()} (e.g., "no deliveries arrived after shutdown") needs the log to
+     * stay intact. The next {@link #start()} on the same harness instance clears the fake's state
+     * before the controller sees it; see the comment in {@code start()}.
      */
     public void stop() {
         if (webContext != null) {

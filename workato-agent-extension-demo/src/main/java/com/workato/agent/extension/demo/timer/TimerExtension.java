@@ -15,6 +15,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.*;
@@ -24,8 +25,11 @@ import java.util.concurrent.atomic.AtomicLong;
 @RequestMapping("/webhook")
 public class TimerExtension implements InitializingBean, DisposableBean {
 
+    /**
+     * Downstream dedup key — Workato triggers use it to drop duplicate deliveries on their side.
+     */
+    static final String HEADER_EVENT_ID = "X-Workato-Event-Id";
     private static final Logger log = LoggerFactory.getLogger(TimerExtension.class);
-
     private final ConcurrentHashMap<String, Subscription> active = new ConcurrentHashMap<>();
 
     @Autowired
@@ -114,7 +118,7 @@ public class TimerExtension implements InitializingBean, DisposableBean {
                 sub.id,
                 sub.periodSeconds);
         return agent.webhook().send(sub.webhookUrl, event,
-                Map.of("X-Workato-Event-Id", UUID.randomUUID().toString()));
+                Map.of(HEADER_EVENT_ID, List.of(UUID.randomUUID().toString())));
     }
 
     @Override
@@ -158,7 +162,7 @@ public class TimerExtension implements InitializingBean, DisposableBean {
     }
 
     public record UnsubscribeRequest(
-            @JsonProperty("recipe_id") String subscriptionId,
+            @JsonProperty("subscription_id") String subscriptionId,
             @JsonProperty("connection_id") String connectionId) {
     }
 

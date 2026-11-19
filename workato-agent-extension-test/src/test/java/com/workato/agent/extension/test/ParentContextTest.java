@@ -3,6 +3,10 @@
  */
 package com.workato.agent.extension.test;
 
+import com.workato.agent.extension.api.AgentExtensionContextV1;
+import com.workato.agent.extension.api.AgentExtensionV1;
+import com.workato.agent.extension.api.AgentToolsV1;
+import com.workato.agent.extension.api.AgentWebhookV1;
 import com.workato.agent.extension.test.testext.TranslatingController;
 import com.workato.agent.extension.test.testext.Translator;
 import org.junit.jupiter.api.AfterEach;
@@ -55,5 +59,49 @@ class ParentContextTest extends AbstractExtensionTest {
 
         assertThat(status(res)).isEqualTo(200);
         assertThat(body(res)).isEqualTo("INHERITED");
+    }
+
+    /**
+     * Regression guard for CLAUDE.md §8: the harness-registered {@code "agentExtension"} bean must
+     * shadow any parent-context bean of the same name. If the parent's bean ever leaked into the
+     * child, customer controllers would autowire a stub they did not configure.
+     */
+    @Test
+    void harnessAgentExtensionShadowsParentAgentExtension() {
+        AnnotationConfigApplicationContext parentWithConflict = new AnnotationConfigApplicationContext();
+        AgentExtensionV1 parentStub = new AgentExtensionV1() {
+            @Override
+            public AgentExtensionContextV1 getContext() {
+                throw new AssertionError("parent bean must not be reached");
+            }
+
+            @Override
+            public AgentWebhookV1 webhook() {
+                throw new AssertionError("parent bean must not be reached");
+            }
+
+            @Override
+            public AgentToolsV1 getTools() {
+                throw new AssertionError("parent bean must not be reached");
+            }
+        };
+        parentWithConflict.getBeanFactory().registerSingleton("agentExtension", parentStub);
+        parentWithConflict.refresh();
+
+        AgentExtensionHarness childAgent = AgentExtensionHarness.extension("tx")
+                .parentContext(parentWithConflict)
+                .yaml("extensions/translator.yml")
+                .bean("translator", new Translator())
+                .start();
+        try {
+            AgentExtensionV1 resolved = childAgent.agentExtension();
+            assertThat(resolved)
+                    .as("child context must shadow parent bean of the same name")
+                    .isNotSameAs(parentStub);
+            assertThat(resolved).isInstanceOf(FakeAgentExtension.class);
+        } finally {
+            childAgent.stop();
+            parentWithConflict.close();
+        }
     }
 }

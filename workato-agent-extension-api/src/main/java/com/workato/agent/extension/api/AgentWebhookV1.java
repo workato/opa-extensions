@@ -6,11 +6,9 @@ package com.workato.agent.extension.api;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
+import java.io.Serial;
 import java.time.Duration;
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.function.IntPredicate;
 import java.util.function.Predicate;
 
@@ -43,10 +41,18 @@ import java.util.function.Predicate;
  * {@link #wakeup(String)} through {@link #wakeup(String, RetryPolicy, Map)}. Analogous to the
  * agent's internal {@code WebhookSend.wakeup} that Kafka's {@code WakeupTriggerThread} uses.
  *
+ * <h2>Headers contract</h2>
+ * Outbound headers are {@code Map<String, List<String>>} — one key may carry multiple values,
+ * which the agent writes out as repeated header lines (needed for {@code Set-Cookie},
+ * {@code Accept}, etc.). Header name matching on the agent side is case-insensitive per RFC
+ * 7230 §3.2; passing both {@code Content-Type} and {@code content-type} is a caller bug and
+ * which value the agent ultimately uses is unspecified. Hop-by-hop headers and
+ * {@code Content-Type} / {@code Content-Length} are ignored by the implementation.
+ *
  * <h2>Delivery semantics</h2>
  * <ul>
  *   <li><b>at-least-once</b> — a request may be delivered more than once if the recipe answers
- *       with a retry'able status (5xx / 408 / 429 by default) or a network error occurs
+ *       with a retryable status (5xx / 408 / 429 by default) or a network error occurs
  *       between the POST and the response.</li>
  *   <li><b>synchronous</b> — the calling thread blocks for the whole retry chain. Extensions that
  *       want asynchronous dispatch manage their own executor.</li>
@@ -57,10 +63,10 @@ import java.util.function.Predicate;
  *
  * <h2>Error handling</h2>
  * <ul>
- *   <li>A delivered non-retry'able response (for example, 400 or 404) is <em>returned</em> as a
+ *   <li>A delivered non-retryable response (for example, 400 or 404) is <em>returned</em> as a
  *       {@link WebhookResponse} with {@link WebhookResponse#isSuccessful()} false — never thrown.
  *       The extension decides whether to treat it as fatal.</li>
- *   <li>A non-retry'able network error, or a retry'able error after all attempts have been
+ *   <li>A non-retryable network error, or a retryable error after all attempts have been
  *       exhausted, raises {@link WebhookDeliveryException}.</li>
  *   <li>{@link WebhookResponse#as(Class, ObjectMapper)} raises {@link WebhookResponseException}
  *       when the body cannot be parsed into the requested type — delivery succeeded but the
@@ -76,9 +82,13 @@ import java.util.function.Predicate;
  * {@link RetryPolicy#DEFAULTS}. See {@link #getDefaultRetryPolicy()} for introspection.
  *
  * <p>The {@code policy} overloads accept any {@link RetryPolicy} instance — fully custom
- * {@code new RetryPolicy(...)}, or a copy of {@link #getDefaultRetryPolicy()} with
- * {@link RetryPolicy#withAttempts(int)} / {@link RetryPolicy#withTimeout(Duration)} /
- * {@link RetryPolicy#withJitter(double)}.
+ * {@code new RetryPolicy(...)}, or a copy of {@link #getDefaultRetryPolicy()} with one of the
+ * eight wither-style helpers ({@link RetryPolicy#withAttempts(int)},
+ * {@link RetryPolicy#withInitialDelay(Duration)}, {@link RetryPolicy#withMultiplier(double)},
+ * {@link RetryPolicy#withMaxDelay(Duration)}, {@link RetryPolicy#withJitter(double)},
+ * {@link RetryPolicy#withTimeout(Duration)},
+ * {@link RetryPolicy#withRetryableStatusCode(IntPredicate)},
+ * {@link RetryPolicy#withRetryableException(Predicate)}).
  */
 public interface AgentWebhookV1 {
 
@@ -91,9 +101,12 @@ public interface AgentWebhookV1 {
      * {@link RetryPolicy}; no custom headers.
      *
      * @param url      target URL; non-null, parseable as a {@link java.net.URI}
-     * @param jsonBody any Jackson-serializable value; {@code null} is encoded as {@code {}}
-     * @return the final {@link WebhookResponse} — successful, or a non-retry'able non-2xx reply
-     * @throws WebhookDeliveryException if all retries are exhausted or a non-retry'able network
+     * @param jsonBody any Jackson-serializable value; must not be {@code null} — pass
+     *                 {@code Map.of()} or {@code ""} explicitly if you intend an empty body
+     * @return the final {@link WebhookResponse} — successful, or a non-retryable non-2xx reply
+     * @throws IllegalArgumentException if {@code url} or {@code jsonBody} is {@code null}, or if
+     *                                  {@code url} is not a parseable URI
+     * @throws WebhookDeliveryException if all retries are exhausted or a non-retryable network
      *                                  error happens; see class Javadoc for the error-handling model
      */
     WebhookResponse send(String url, Object jsonBody);
@@ -102,9 +115,10 @@ public interface AgentWebhookV1 {
      * Deliver {@code jsonBody} to {@code url} with custom headers, using the profile's effective
      * {@link RetryPolicy}. {@code Content-Type} and {@code Content-Length} entries in
      * {@code headers} are ignored — the former is always {@code application/json}, the latter is
-     * computed automatically.
+     * computed automatically. See the "Headers contract" section of the class Javadoc for the
+     * casing and multi-value semantics.
      */
-    WebhookResponse send(String url, Object jsonBody, Map<String, String> headers);
+    WebhookResponse send(String url, Object jsonBody, Map<String, List<String>> headers);
 
     /**
      * Deliver {@code jsonBody} to {@code url} with a per-call {@link RetryPolicy} override; no
@@ -116,7 +130,7 @@ public interface AgentWebhookV1 {
     /**
      * Full control — per-call {@link RetryPolicy} and custom headers.
      */
-    WebhookResponse send(String url, Object jsonBody, RetryPolicy policy, Map<String, String> headers);
+    WebhookResponse send(String url, Object jsonBody, RetryPolicy policy, Map<String, List<String>> headers);
 
     // =========================================================================================
     // wakeup: empty POST (pull-mode trigger wake)
@@ -133,7 +147,7 @@ public interface AgentWebhookV1 {
     /**
      * Empty POST with custom headers.
      */
-    WebhookResponse wakeup(String url, Map<String, String> headers);
+    WebhookResponse wakeup(String url, Map<String, List<String>> headers);
 
     /**
      * Empty POST with per-call {@link RetryPolicy}.
@@ -143,7 +157,7 @@ public interface AgentWebhookV1 {
     /**
      * Full control — per-call {@link RetryPolicy} and custom headers.
      */
-    WebhookResponse wakeup(String url, RetryPolicy policy, Map<String, String> headers);
+    WebhookResponse wakeup(String url, RetryPolicy policy, Map<String, List<String>> headers);
 
     // =========================================================================================
     // introspection
@@ -174,7 +188,15 @@ public interface AgentWebhookV1 {
      * agent log so operators can notice.
      *
      * <p>{@link #headers()} is an unmodifiable view; mutators throw
-     * {@link UnsupportedOperationException}.
+     * {@link UnsupportedOperationException}. Per-key value lists are also unmodifiable so a
+     * {@code headers.get("X-Foo").add(...)} is rejected.
+     *
+     * <h2>Validation</h2>
+     * The canonical constructor rejects {@code statusCode < 100} or {@code > 599},
+     * {@code attemptCount < 1}, and negative {@code elapsed} with
+     * {@link IllegalArgumentException}. Production {@code AgentWebhookV1Impl} always produces
+     * valid instances; the explicit validation here fences off tests that hand-construct a
+     * response with bogus values.
      */
     record WebhookResponse(
             int statusCode,
@@ -185,17 +207,40 @@ public interface AgentWebhookV1 {
             Duration elapsed) {
 
         /**
-         * Canonical constructor — defensive-copies {@code headers} into an unmodifiable map and
-         * normalises {@code elapsed} to {@link Duration#ZERO} when {@code null}, so instances are
-         * safe to retain and compare.
+         * Canonical constructor — validates all fields, defensive-copies {@code headers} into an
+         * unmodifiable map with unmodifiable value lists, and normalises {@code elapsed} to
+         * {@link Duration#ZERO} when {@code null}.
          */
         public WebhookResponse {
-            headers = headers == null
-                    ? Collections.emptyMap()
-                    : Collections.unmodifiableMap(new LinkedHashMap<>(headers));
+            if (statusCode < 100 || statusCode > 599) {
+                throw new IllegalArgumentException(
+                        "statusCode must be in the 100..599 range, got " + statusCode);
+            }
+            if (attemptCount < 1) {
+                throw new IllegalArgumentException(
+                        "attemptCount must be >= 1 (at least one attempt was made), got " + attemptCount);
+            }
+            if (elapsed != null && elapsed.isNegative()) {
+                throw new IllegalArgumentException("elapsed must be non-negative, got " + elapsed);
+            }
+            headers = deepUnmodifiable(headers);
             if (elapsed == null) {
                 elapsed = Duration.ZERO;
             }
+        }
+
+        private static Map<String, List<String>> deepUnmodifiable(Map<String, List<String>> src) {
+            if (src == null || src.isEmpty()) {
+                return Map.of();
+            }
+            Map<String, List<String>> copy = new LinkedHashMap<>(src.size());
+            for (Map.Entry<String, List<String>> e : src.entrySet()) {
+                List<String> values = e.getValue();
+                copy.put(e.getKey(), values == null
+                        ? List.of()
+                        : Collections.unmodifiableList(new ArrayList<>(values)));
+            }
+            return Collections.unmodifiableMap(copy);
         }
 
         /**
@@ -248,8 +293,11 @@ public interface AgentWebhookV1 {
 
     /**
      * Retry configuration with exponential backoff and optional random jitter. Immutable record;
-     * every mutating helper ({@link #withAttempts(int)}, {@link #withTimeout(Duration)},
-     * {@link #withJitter(double)}) returns a new instance.
+     * every mutating helper ({@link #withAttempts(int)}, {@link #withInitialDelay(Duration)},
+     * {@link #withMultiplier(double)}, {@link #withMaxDelay(Duration)},
+     * {@link #withJitter(double)}, {@link #withTimeout(Duration)},
+     * {@link #withRetryableStatusCode(IntPredicate)},
+     * {@link #withRetryableException(Predicate)}) returns a new instance.
      *
      * <h2>Delay formula</h2>
      * For attempt {@code n} (1-based, delay applied <em>after</em> attempt {@code n} before
@@ -283,7 +331,7 @@ public interface AgentWebhookV1 {
         /**
          * Baseline policy applied when a profile does not customise any webhook settings.
          * Five attempts, exponential 1 s → 2 s → 4 s → 8 s (no jitter), 30 s per-attempt timeout,
-         * retrying on 5xx / 408 / 429 and on all {@link IOException}s.
+         * retrying on 5xx / 408 / 429 and on all non-null {@link IOException}s.
          */
         public static final RetryPolicy DEFAULTS = new RetryPolicy(
                 5,
@@ -293,7 +341,7 @@ public interface AgentWebhookV1 {
                 0.0,
                 Duration.ofSeconds(30),
                 s -> s >= 500 || s == 408 || s == 429,
-                e -> true);
+                e -> e != null);
 
         /**
          * Canonical constructor — validates all fields; see class Javadoc for the rules.
@@ -305,13 +353,13 @@ public interface AgentWebhookV1 {
             if (initialDelay == null || initialDelay.isNegative()) {
                 throw new IllegalArgumentException("initialDelay must be non-negative, got " + initialDelay);
             }
-            if (!(multiplier >= 1.0) || Double.isNaN(multiplier) || Double.isInfinite(multiplier)) {
+            if (!(multiplier >= 1.0) || Double.isInfinite(multiplier)) {
                 throw new IllegalArgumentException("multiplier must be a finite value >= 1.0, got " + multiplier);
             }
             if (maxDelay == null || maxDelay.isNegative()) {
                 throw new IllegalArgumentException("maxDelay must be non-negative, got " + maxDelay);
             }
-            if (!(jitterFactor >= 0.0 && jitterFactor <= 1.0) || Double.isNaN(jitterFactor)) {
+            if (!(jitterFactor >= 0.0 && jitterFactor <= 1.0)) {
                 throw new IllegalArgumentException("jitterFactor must be in [0.0, 1.0], got " + jitterFactor);
             }
             if (requestTimeout == null || requestTimeout.isNegative() || requestTimeout.isZero()) {
@@ -334,6 +382,30 @@ public interface AgentWebhookV1 {
         }
 
         /**
+         * Copy of this policy with a different {@link #initialDelay()}.
+         */
+        public RetryPolicy withInitialDelay(Duration delay) {
+            return new RetryPolicy(maxAttempts, delay, multiplier, maxDelay, jitterFactor,
+                    requestTimeout, retryableStatusCode, retryableException);
+        }
+
+        /**
+         * Copy of this policy with a different {@link #multiplier()}.
+         */
+        public RetryPolicy withMultiplier(double factor) {
+            return new RetryPolicy(maxAttempts, initialDelay, factor, maxDelay, jitterFactor,
+                    requestTimeout, retryableStatusCode, retryableException);
+        }
+
+        /**
+         * Copy of this policy with a different {@link #maxDelay()}.
+         */
+        public RetryPolicy withMaxDelay(Duration cap) {
+            return new RetryPolicy(maxAttempts, initialDelay, multiplier, cap, jitterFactor,
+                    requestTimeout, retryableStatusCode, retryableException);
+        }
+
+        /**
          * Copy of this policy with a different {@link #requestTimeout()}.
          */
         public RetryPolicy withTimeout(Duration t) {
@@ -348,10 +420,26 @@ public interface AgentWebhookV1 {
             return new RetryPolicy(maxAttempts, initialDelay, multiplier, maxDelay, factor,
                     requestTimeout, retryableStatusCode, retryableException);
         }
+
+        /**
+         * Copy of this policy with a different {@link #retryableStatusCode()} predicate.
+         */
+        public RetryPolicy withRetryableStatusCode(IntPredicate predicate) {
+            return new RetryPolicy(maxAttempts, initialDelay, multiplier, maxDelay, jitterFactor,
+                    requestTimeout, predicate, retryableException);
+        }
+
+        /**
+         * Copy of this policy with a different {@link #retryableException()} predicate.
+         */
+        public RetryPolicy withRetryableException(Predicate<IOException> predicate) {
+            return new RetryPolicy(maxAttempts, initialDelay, multiplier, maxDelay, jitterFactor,
+                    requestTimeout, retryableStatusCode, predicate);
+        }
     }
 
     /**
-     * Thrown when delivery exhausts all retry attempts, or when a non-retry'able network error
+     * Thrown when delivery exhausts all retry attempts, or when a non-retryable network error
      * occurs. Carries the target URL, the number of attempts that were made, and — when the final
      * failure was an HTTP response rather than an exception — the last {@link WebhookResponse}
      * for diagnostics.
@@ -360,6 +448,9 @@ public interface AgentWebhookV1 {
      * but are not required to declare {@code throws}.
      */
     final class WebhookDeliveryException extends RuntimeException {
+
+        @Serial
+        private static final long serialVersionUID = 1L;
 
         private final String url;
         private final int attemptCount;
@@ -412,6 +503,9 @@ public interface AgentWebhookV1 {
      * <p>Unchecked, same reasoning as {@link WebhookDeliveryException}.
      */
     final class WebhookResponseException extends RuntimeException {
+
+        @Serial
+        private static final long serialVersionUID = 1L;
 
         public WebhookResponseException(String message) {
             super(message);

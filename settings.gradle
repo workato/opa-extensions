@@ -25,7 +25,17 @@ include 'workato-agent-extension-demo'
 //      Those would be fine in Maven inheriting from a parent POM, but this
 //      standalone BOM has no parent, so we drop them. No module in this
 //      workspace depends on grpc/protobuf/guava, so the loss is harmless.
+//
+// The transformation uses a real XML DOM instead of line regexes:
+//   * handles <dependency> on a single line, with attributes, with unusual
+//     whitespace, etc. — all forms a formatter might produce;
+//   * does not confuse a stray `<version>` string inside a comment with a
+//     real <version> element;
+//   * unaffected by future indentation changes to the source .xml.
 // ---------------------------------------------------------------------------
+import groovy.xml.XmlParser
+import groovy.xml.XmlUtil
+
 def bomSource = file('libs/workato-onprem-bom-0.1.0.xml')
 def bomTarget = file('build/bom-repo/com/workato/agent/workato-agent-bom/0.1.0/workato-agent-bom-0.1.0.pom')
 if (!bomSource.isFile()) {
@@ -34,41 +44,36 @@ if (!bomSource.isFile()) {
 if (!bomTarget.isFile() || bomTarget.lastModified() < bomSource.lastModified()) {
     bomTarget.parentFile.mkdirs()
 
-    def lines = bomSource.readLines('UTF-8')
-    def out = new StringBuilder()
-    def i = 0
-    while (i < lines.size()) {
-        def line = lines[i]
+    // Namespace-oblivious parsing — we only care about element local names, and the Maven POM
+    // namespace is uniform across the whole file. This keeps the matching below plain-string.
+    def parser = new XmlParser(false, false, true)
+    parser.setFeature('http://apache.org/xml/features/disallow-doctype-decl', true)
+    def root = parser.parse(bomSource)
 
-        // Dependency block — buffer until </dependency>, drop if it has no <version>.
-        if (line =~ /^\s*<dependency>\s*$/) {
-            def block = new StringBuilder()
-            def hasVersion = false
-            while (i < lines.size()) {
-                def l = lines[i]
-                block.append(l).append('\n')
-                if (l.contains('<version>')) hasVersion = true
-                if (l =~ /<\/dependency>/) {
-                    i++; break
-                }
-                i++
-            }
-            if (hasVersion) out.append(block)
-            continue
-        }
-
-        // GAV rewrite — only touches the project header, not nested <groupId> etc.
-        if (line =~ /^\s*<groupId>\s*<\/groupId>\s*$/) {
-            out.append(line.replace('<groupId></groupId>', '<groupId>com.workato.agent</groupId>')).append('\n')
-        } else if (line =~ /^\s*<artifactId>version-catalog<\/artifactId>\s*$/) {
-            out.append(line.replace('version-catalog', 'workato-agent-bom')).append('\n')
-        } else if (line =~ /^\s*<version>unspecified<\/version>\s*$/) {
-            out.append(line.replace('unspecified', '0.1.0')).append('\n')
+    // 1. GAV rewrite — only the project-level coords (direct children of <project>).
+    def setOrAddChild = { parent, String local, String value ->
+        def matches = parent.children().findAll { it instanceof groovy.util.Node && it.name() == local }
+        if (matches.isEmpty()) {
+            parent.appendNode(local, value)
         } else {
-            out.append(line).append('\n')
+            matches[0].setValue(value)
         }
-        i++
     }
-    bomTarget.setText(out.toString(), 'UTF-8')
+    setOrAddChild(root, 'groupId', 'com.workato.agent')
+    setOrAddChild(root, 'artifactId', 'workato-agent-bom')
+    setOrAddChild(root, 'version', '0.1.0')
+
+    // 2. Drop versionless imports — Gradle 9 rejects the POM wholesale otherwise.
+    def deps = root.'**'.findAll { it instanceof groovy.util.Node && it.name() == 'dependency' }
+    deps.each { dep ->
+        boolean hasVersion = dep.children().any {
+            it instanceof groovy.util.Node && it.name() == 'version'
+        }
+        if (!hasVersion) {
+            dep.parent().remove(dep)
+        }
+    }
+
+    bomTarget.setText(XmlUtil.serialize(root), 'UTF-8')
     logger.lifecycle("Regenerated ${bomTarget.name} from ${bomSource.name}")
 }
