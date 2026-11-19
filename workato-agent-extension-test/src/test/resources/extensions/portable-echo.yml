@@ -1,0 +1,5 @@
+extensions:
+  my-profile:
+    controllerClass: com.workato.agent.extension.test.testext.PortableEchoController
+    greeting: baseline-greeting-from-yaml
+    yaml-only-key: yaml-only-value

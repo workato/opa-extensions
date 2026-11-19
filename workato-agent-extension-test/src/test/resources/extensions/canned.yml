@@ -1,0 +1,3 @@
+extensions:
+  canned:
+    controller: com.workato.agent.extension.test.testext.StaticController

@@ -1,0 +1,48 @@
+plugins {
+    id 'java-library'
+}
+
+// Produces sources + javadoc jars alongside the regular jar so the artifact
+// published to Nexus (future work) ships them for IDE consumption.
+java {
+    withJavadocJar()
+    withSourcesJar()
+}
+
+jar {
+    // README.md lives at the module root (not under src/main/java). Ship it into the jar so a
+    // downstream (agent-launcher) can pluck it out of the artifact and place it next to
+    // extension-api-*.jar in its distribution.
+    from(projectDir) {
+        include 'README.md'
+    }
+}
+
+tasks.named('javadocJar') {
+    from(projectDir) {
+        include 'README.md'
+    }
+}
+
+javadoc {
+    options.addStringOption('Xdoclint:all,-missing', '-quiet')
+    options.encoding = 'UTF-8'
+    options.overview = 'src/main/javadoc/overview.html'
+}
+
+dependencies {
+    // Jackson databind is used by AgentWebhookApiV1.WebhookResponse.as(Class<T>) to deserialize
+    // the body of a recipe webhook response. compileOnly rather than api: the hosting Spring
+    // environment always provides Jackson at runtime (every agent / extension context ships
+    // Spring MVC, which pulls jackson-databind in), so we must not force it into customer JARs.
+    compileOnly "tools.jackson.core:jackson-databind:${jacksonVersion}"
+
+    testImplementation "org.junit.jupiter:junit-jupiter:${junitVersion}"
+    testImplementation "tools.jackson.core:jackson-databind:${jacksonVersion}"
+    testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:${junitVersion}"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher:${junitPlatformVersion}"
+}
+
+test {
+    useJUnitPlatform()
+}

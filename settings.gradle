@@ -1,0 +1,5 @@
+rootProject.name = 'workato-agent-extension'
+
+include 'workato-agent-extension-api'
+include 'workato-agent-extension-test'
+include 'workato-agent-extension-demo'

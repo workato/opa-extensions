@@ -1,0 +1,163 @@
+plugins {
+    id 'java'
+}
+
+// Make everything in `compileOnly` also visible to the test classpath. Gradle
+// does NOT propagate compileOnly to tests by default, so without this the
+// AgentExtensionHarness tests would lose Spring/Jackson/Jakarta/SLF4J at test
+// runtime and fail with ClassNotFoundException.
+configurations {
+    testImplementation.extendsFrom compileOnly
+}
+
+dependencies {
+    // ---- Provided by the agent at runtime — compileOnly, NOT shaded ----
+    //
+    // extension-api is the API we compile against; the agent exposes it at
+    // runtime. Shading it would cause classloader conflicts (see
+    // extension-api/README.md — "do not shade it into your JAR").
+    compileOnly project(':workato-agent-extension-api')
+    testImplementation project(':workato-agent-extension-test')
+
+    // Spring, Jackson, Jakarta, SLF4J — the agent is itself a Spring app and
+    // provides all four stacks at runtime. We compile against them (every
+    // extension uses @RestController / @Value / @JsonProperty / @Inject /
+    // Logger), but packaging them would duplicate code the agent already has.
+    compileOnly "org.springframework:spring-context:${springVersion}"
+    compileOnly "org.springframework:spring-webmvc:${springVersion}"
+
+    compileOnly "com.fasterxml.jackson.core:jackson-core:2.17.2"
+    compileOnly "com.fasterxml.jackson.core:jackson-databind:2.17.2"
+
+    compileOnly "jakarta.servlet:jakarta.servlet-api:${jakartaServletVersion}"
+    compileOnly "jakarta.inject:jakarta.inject-api:2.0.1"
+
+    compileOnly "org.slf4j:slf4j-api:${slf4jVersion}"
+
+    // Apache HttpClient 4 — the agent ships it as part of its own runtime, so
+    // NtlmExtension can import org.apache.http.* without us shading it in.
+    compileOnly "org.apache.httpcomponents:httpclient:4.5.14"
+
+    // ---- Actually used by extension code — shaded into the fat jar ----
+    //
+    // Keep the comment next to each entry pointing at the one or two source
+    // files that reference the library, so a future reader can confirm the
+    // dependency is still needed before upgrading or dropping it.
+    implementation "commons-codec:commons-codec:1.15"                // SecurityExtension — Hex
+    implementation "org.apache.commons:commons-lang3:3.12.0"         // NtlmExtension, TimerExtension — StringUtils
+
+    testImplementation "org.springframework:spring-test:${springVersion}"
+    testImplementation "org.junit.jupiter:junit-jupiter:${junitVersion}"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher:${junitPlatformVersion}"
+}
+
+test {
+    useJUnitPlatform()
+}
+
+// ---------------------------------------------------------------------------
+// Fat jar — bundle every runtime dependency into build/libs/extension-demo-*.jar
+// so the deliverable is a single file that drops into the agent's lib_ext/.
+// extension-api is declared compileOnly above, so it is NOT on runtimeClasspath
+// and therefore is NOT shaded here — exactly as the API README requires
+// ("The API is compile-only / provided — do not shade it into your JAR. The
+//  agent provides it at runtime; shading would cause classloader conflicts").
+// ---------------------------------------------------------------------------
+jar {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    // Strip signatures from third-party JARs — otherwise the JVM rejects the
+    // merged archive on load with "SignatureException: invalid signature file digest".
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+}
+
+// ---------------------------------------------------------------------------
+// Ruby custom connectors — Workato SDK (workato-connector-sdk gem).
+// Each connector lives in its own self-contained SDK project under
+// src/main/ruby/<name>/. We run `bundle install` once per project, then
+// `bundle exec rspec` to execute the specs against pre-recorded VCR cassettes.
+// Hooks into `check` so the full build runs the Ruby suite alongside Java.
+// ---------------------------------------------------------------------------
+
+// Resolve `bundle` explicitly. Gradle's Exec searches the parent process PATH,
+// not the child's env, so we must hand it an absolute path when the parent's
+// PATH shadows the Ruby we actually want.
+// Preference order:
+//   1. BUNDLE_BIN env var — explicit override (set this on CI if needed).
+//   2. ~/.asdf/shims/bundle — if asdf is installed (user's dev setup).
+//   3. plain `bundle` — fallback (whatever is first on PATH).
+def bundleBin = {
+    def override = System.getenv('BUNDLE_BIN')
+    if (override && new File(override).isFile()) return override
+    def shim = new File("${System.getenv('HOME')}/.asdf/shims/bundle")
+    shim.isFile() ? shim.absolutePath : 'bundle'
+}
+
+// One shared Gemfile + Gemfile.lock live at src/test/ruby/; bundler walks
+// up from any subdir to find them, so a single `bundle install` serves every
+// connector project.
+task rubyBundleInstall(type: Exec) {
+    group = 'verification'
+    description = 'bundle install for the shared src/test/ruby/ Gemfile.'
+    workingDir file('src/test/ruby')
+    commandLine bundleBin(), 'install', '--quiet'
+}
+
+// `-Pspec=<filter>` forwards one example-selector to rspec:
+//   -Pspec='posts the payload'           → bundle exec rspec -e 'posts the payload'
+//   -Pspec=spec/connector_spec.rb:12     → bundle exec rspec spec/connector_spec.rb:12
+// Anything containing '/' or ':' is treated as a path (optionally with line);
+// otherwise as a description substring. No filter → the whole suite runs.
+def rspecCommand = { filter ->
+    def cmd = [bundleBin(), 'exec', 'rspec']
+    if (filter) {
+        def f = filter.toString()
+        cmd += (f.contains('/') || f.contains(':')) ? [f] : ['-e', f]
+    }
+    cmd
+}
+
+def rspecDescription = { connectorName ->
+    "RSpec for the ${connectorName} Workato connector. " +
+            'Filter one example: -Pspec="description substring" or -Pspec=spec/connector_spec.rb[:line].'
+}
+
+task securityRspec(type: Exec) {
+    group = 'verification'
+    description = rspecDescription('security')
+    dependsOn rubyBundleInstall
+    workingDir file('src/test/ruby/security')
+    commandLine rspecCommand(project.findProperty('spec'))
+}
+
+task ntlmRspec(type: Exec) {
+    group = 'verification'
+    description = rspecDescription('ntlm')
+    dependsOn rubyBundleInstall
+    workingDir file('src/test/ruby/ntlm')
+    commandLine rspecCommand(project.findProperty('spec'))
+}
+
+task timerRspec(type: Exec) {
+    group = 'verification'
+    description = rspecDescription('timer')
+    dependsOn rubyBundleInstall
+    workingDir file('src/test/ruby/timer')
+    commandLine rspecCommand(project.findProperty('spec'))
+}
+
+task testRubyConnectors {
+    group = 'verification'
+    description = 'Runs RSpec for every Ruby custom connector using VCR cassettes.'
+    dependsOn securityRspec, ntlmRspec, timerRspec
+}
+
+// Hook into both `test` and `check` so `./gradlew test` also runs the Ruby suite.
+// finalizedBy (not dependsOn) → Ruby runs after Java regardless of Java outcome,
+// so both failures are visible in one build.
+test.finalizedBy testRubyConnectors
+check.dependsOn testRubyConnectors

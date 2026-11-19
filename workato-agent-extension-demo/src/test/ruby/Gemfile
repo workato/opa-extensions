@@ -1,0 +1,14 @@
+source 'https://rubygems.org'
+
+gem 'workato-connector-sdk'
+
+# Ruby 3.4+ moved `csv` out of stdlib into a bundled gem. workato-connector-sdk
+# transitively requires it (via its `Workato::Connector::Sdk::Dsl::Csv` module)
+# but does not declare it as a dependency, so we must list it explicitly.
+gem 'csv'
+
+group :development, :test do
+  gem 'rspec'
+  gem 'vcr'
+  gem 'webmock'
+end

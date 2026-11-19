@@ -1,0 +1,61 @@
+plugins {
+    id 'java-library'
+}
+
+java {
+    withJavadocJar()
+    withSourcesJar()
+}
+
+jar {
+    from(projectDir) {
+        include 'README.md'
+    }
+}
+
+tasks.named('javadocJar') {
+    from(projectDir) {
+        include 'README.md'
+    }
+}
+
+javadoc {
+    options.addStringOption('Xdoclint:all,-missing', '-quiet')
+    options.encoding = 'UTF-8'
+    options.overview = 'src/main/javadoc/overview.html'
+}
+
+dependencies {
+    // The public V1 API customers compile against — the only "agent-side" dep of this harness.
+    api project(':workato-agent-extension-api')
+
+    // Spring MVC + MockMvc provide the "mini agent" runtime the harness builds for each test.
+    api "org.springframework:spring-webmvc:${springVersion}"
+    api "org.springframework:spring-test:${springVersion}"
+
+    // MockMvc internally calls jakarta.servlet.* types — exposed via MvcResult.getResponse() to
+    // customers writing assertions on the raw response.
+    api "jakarta.servlet:jakarta.servlet-api:${jakartaServletVersion}"
+
+    // Jackson 3 — default message converter in Spring MVC, matching the agent's production behaviour.
+    api "tools.jackson.core:jackson-databind:${jacksonVersion}"
+
+    // YAML support — the harness reads an extension's YAML section the same way the agent does.
+    api "tools.jackson.dataformat:jackson-dataformat-yaml:${jacksonVersion}"
+
+    // JUnit 5 is a required api dependency because the harness exposes a JUnit 5
+    // BeforeAllCallback/AfterAllCallback for the @RegisterExtension integration path.
+    api "org.junit.jupiter:junit-jupiter-api:${junitVersion}"
+
+    api "org.slf4j:slf4j-api:${slf4jVersion}"
+
+    testImplementation "org.junit.jupiter:junit-jupiter:${junitVersion}"
+    testImplementation "org.assertj:assertj-core:${assertjVersion}"
+    testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:${junitVersion}"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher:${junitPlatformVersion}"
+    testRuntimeOnly "ch.qos.logback:logback-classic:${logbackVersion}"
+}
+
+test {
+    useJUnitPlatform()
+}
