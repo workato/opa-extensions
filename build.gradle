@@ -6,7 +6,7 @@
 
 allprojects {
     group = 'com.workato.agent'
-    version = '0.2'
+    version = '0.1.0'
 
     repositories {
         mavenLocal()
