@@ -189,6 +189,23 @@ All three publications land in the Workato Nexus
 when `./gradlew publish` runs. `publishToMavenLocal` installs them under
 `~/.m2/repository/com/workato/agent/`.
 
+**Published POMs are self-contained.** The `workato-agent-bom` is a
+build-time-internal artifact — it pins versions across subprojects at
+compile time and is NOT published to any repository. To make published
+POMs resolvable without the BOM, root `build.gradle` configures every
+`MavenPublication` with:
+
+1. `versionMapping` — bakes the runtime-resolved version onto every
+   `<dependency>` in the generated POM (instead of leaving deps without a
+   `<version>` and relying on a BOM import to pin them).
+2. `pom.withXml` — strips the `<dependencyManagement>` section that
+   `platform(...)` would otherwise leave in the POM.
+
+Result: a Maven or Gradle consumer resolves our artifacts straight from
+`com.workato.agent:*:<version>` without ever needing `workato-agent-bom`.
+Gradle metadata (`.module`) still carries the full dependency graph for
+Gradle-native consumers; the POM stays the Maven-compatible fallback.
+
 ### Credentials
 
 **Primary path — GitHub Actions.** Publish does not happen from developer

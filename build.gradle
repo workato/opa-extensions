@@ -170,6 +170,40 @@ subprojects {
             }
         }
     }
+
+    // ---------------------------------------------------------------------------------------
+    // Published POMs are self-contained — consumers must not need the
+    // workato-agent-bom to resolve our artifacts (the BOM is a build-time
+    // internal and is not published anywhere).
+    //
+    // Two steps, applied to every MavenPublication the subproject produces:
+    //
+    //   1. versionMapping — bakes the actual runtime-resolved version onto
+    //      every <dependency> in the generated POM. Without this, Gradle
+    //      writes deps with no <version>, relying on a BOM import to pin
+    //      them — which breaks for any consumer who cannot resolve the BOM.
+    //
+    //   2. pom.withXml — strips the <dependencyManagement> section
+    //      (= the `platform(...)` BOM import that Gradle leaves behind by
+    //      default). After step 1 every dep already carries a version, so
+    //      the import is redundant; keeping it would make consumers chase
+    //      a BOM GAV that is not in any public repository.
+    //
+    // Applied via configureEach + afterEvaluate so the hook fires regardless
+    // of the order in which each module registers its publication.
+    // ---------------------------------------------------------------------------------------
+    afterEvaluate {
+        publishing.publications.withType(MavenPublication).configureEach {
+            versionMapping {
+                usage('java-api') { fromResolutionOf('runtimeClasspath') }
+                usage('java-runtime') { fromResolutionResult() }
+            }
+            pom.withXml {
+                def root = asNode()
+                root['dependencyManagement'].each { root.remove(it) }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
