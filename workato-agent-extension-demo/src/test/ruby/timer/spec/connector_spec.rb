@@ -22,9 +22,14 @@ RSpec.describe 'onprem timer connector' do
   let(:connector) { Workato::Connector::Sdk::Connector.from_file(CONNECTOR_PATH, settings) }
 
   describe 'test' do
-    it 'pings the health endpoint without raising' do
+    it 'pings the health endpoint and returns the truthy ping payload' do
       VCR.use_cassette('test') do
-        expect { connector.test(settings) }.not_to raise_error
+        # /webhook/health returns {"ok": true}; pin that shape so a regression that
+        # flips the endpoint to void (empty body) or to an error status fails loudly
+        # instead of silently reporting a successful connection test.
+        result = connector.test(settings)
+        expect(result).to be_truthy
+        expect(result['ok']).to be(true)
       end
     end
   end

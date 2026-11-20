@@ -143,7 +143,7 @@
         response.merge('connection_id' => connection['connection_id'])
       end,
 
-      webhook_notification: lambda do |_input, payload, _ext_input_schema, _ext_output_schema, _headers, _params, _settings, _subscribe_output|
+      webhook_notification: lambda do |_input, payload, _ext_input_schema, _ext_output_schema, _headers, _params, _connection, _subscribe_output|
         payload
       end,
 

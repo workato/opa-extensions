@@ -23,6 +23,15 @@ javadoc {
     options.addStringOption('Xdoclint:all,-missing', '-quiet')
     options.encoding = 'UTF-8'
     options.overview = 'src/main/javadoc/overview.html'
+    // Register the standard JDK Javadoc "@apiNote / @implSpec / @implNote" tags — modern JDKs
+    // ship them in javadoc.tool but do not auto-register them in the Gradle default toolchain,
+    // so a plain Javadoc run fails with "unknown tag". These placements mirror the standard
+    // location Javadoc uses for the three tags.
+    options.tags = [
+            'apiNote:a:API Note:',
+            'implSpec:a:Implementation Requirements:',
+            'implNote:a:Implementation Note:'
+    ]
 }
 
 dependencies {

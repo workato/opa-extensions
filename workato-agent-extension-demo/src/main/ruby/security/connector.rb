@@ -31,6 +31,9 @@
   test: ->(connection) {
     get("http://localhost/ext/#{connection['profile']}/ping")
       .headers('X-Workato-Connector': 'enforce')
+      .after_error_response(/.*/) do |_code, body, _headers, message|
+      error("Connection test failed: #{message}. Response: #{body}")
+    end
   },
 
   actions: {
@@ -58,6 +61,9 @@
         post("http://localhost/ext/#{connection['profile']}/computeDigest",
              payload: input['payload'])
           .headers('X-Workato-Connector': 'enforce')
+          .after_error_response(/.*/) do |_code, body, _headers, message|
+          error("computeDigest failed: #{message}. Response: #{body}")
+        end
       },
 
       sample_output: ->(_connection, _input) {

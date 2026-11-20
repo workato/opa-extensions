@@ -63,9 +63,12 @@ RSpec.describe 'onprem ntlm connector' do
   end
 
   describe 'test' do
-    it 'pings the agent endpoint without raising' do
+    it 'pings the agent endpoint and returns a truthy result' do
       VCR.use_cassette('ntlm_connection_test') do
-        expect { connector.test(settings) }.not_to raise_error
+        # The connector's test lambda does a lightweight probe through /request and
+        # treats any non-raised response as success; pin the truthy contract so a
+        # future regression that returns nil / false fails loudly.
+        expect(connector.test(settings)).to be_truthy
       end
     end
   end

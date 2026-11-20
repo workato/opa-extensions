@@ -456,6 +456,15 @@ public final class AgentExtensionHarness
      * variable values via {@code pathVars}.
      *
      * <pre>{@code agent.urlFor(UpperCasingController::upper, "world")  // → "/ext/upper/upper/world"}</pre>
+     *
+     * @apiNote {@code pathVars} must carry exactly one value per {@code @PathVariable} parameter,
+     * in declaration order. <em>Extra</em> values beyond the number of path variables are
+     * silently ignored — the resolver only consumes the first N where N is the number of
+     * {@code @PathVariable} parameters on the method. This is deliberate so a
+     * {@code Ref1} method reference whose one declared parameter is actually
+     * {@code @RequestBody} (and the path variable count is zero) still compiles against
+     * the same overload. Supplying <em>fewer</em> values than there are path variables
+     * throws {@link IllegalArgumentException}.
      */
     public <C, A, R> String urlFor(Ref1<C, A, R> methodRef, Object... pathVars) {
         return urlFor(ControllerMethodResolver.resolve(methodRef, pathVars).controllerPath());
@@ -477,7 +486,8 @@ public final class AgentExtensionHarness
     /**
      * Build a {@link MockHttpServletRequestBuilder} from a one-arg controller method reference,
      * substituting {@code @PathVariable} placeholders with {@code pathVars}. See
-     * {@link #urlFor(Ref1, Object...)} for the substitution rule.
+     * {@link #urlFor(Ref1, Object...)} for the substitution rule and the {@code @apiNote} on
+     * how extra path-var values are handled.
      *
      * <pre>{@code mockMvc().perform(agent.request(UpperCasingController::upper, "world"))}</pre>
      */

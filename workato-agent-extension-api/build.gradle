@@ -28,6 +28,13 @@ javadoc {
     options.addStringOption('Xdoclint:all,-missing', '-quiet')
     options.encoding = 'UTF-8'
     options.overview = 'src/main/javadoc/overview.html'
+    // Register the standard JDK Javadoc "@apiNote / @implSpec / @implNote" tags — see the matching
+    // comment in workato-agent-extension-test/build.gradle for the rationale.
+    options.tags = [
+            'apiNote:a:API Note:',
+            'implSpec:a:Implementation Requirements:',
+            'implNote:a:Implementation Note:'
+    ]
 }
 
 dependencies {

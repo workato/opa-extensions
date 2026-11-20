@@ -273,15 +273,20 @@ public class NtlmExtension implements DisposableBean {
         /**
          * Parse {@code user:pass@domain/workstation} from the Workato-supplied auth header.
          * <p>
-         * Caveats of the simple {@code split} logic:
+         * The three separators — {@code :}, {@code @}, {@code /} — must each appear at most once
+         * in their respective positions; passwords, domains and workstations containing any of
+         * them render the header unparseable. The parser detects ambiguity instead of silently
+         * taking the first-occurrence split (which would ship a truncated password to the
+         * upstream NTLM handshake and surface as an opaque authentication failure). On ambiguity
+         * the returned {@code NtlmAuth} has {@code null} username/password, which the controller
+         * surfaces as 401 with a WARN log.
+         * <p>
+         * Caveats:
          * <ul>
-         *   <li>Splits on the <em>first</em> {@code @}, so passwords containing {@code @} break
-         *       — a password like {@code a@b} would be parsed as user={@code a} / domain={@code b}
-         *       and the credentials silently fail against the upstream. Callers must ensure
-         *       passwords do not contain {@code @} / {@code :} / {@code /}.</li>
          *   <li>Does not validate charset; whitespace is preserved verbatim.</li>
-         *   <li>Malformed input yields a {@code NtlmAuth} with {@code null} username/password,
-         *       which the controller surfaces as 401.</li>
+         *   <li>Rejects passwords containing {@code @}, {@code :}, domains containing {@code /},
+         *       or any header value with more than one {@code @} / {@code /} separator.</li>
+         *   <li>Malformed input yields a {@code NtlmAuth} with {@code null} username/password.</li>
          * </ul>
          */
         private static NtlmAuth build(String authHeader) {
@@ -290,7 +295,14 @@ public class NtlmExtension implements DisposableBean {
                 return auth;
             }
 
+            // Reject ambiguous separator usage up front — a second `@` means the password contains
+            // the separator (or someone concatenated two headers), either way we cannot recover the
+            // original password without a defined escape convention, which NTLM does not have.
             int at = authHeader.indexOf('@');
+            if (at >= 0 && authHeader.indexOf('@', at + 1) >= 0) {
+                return auth;
+            }
+
             String credPart;
             String domainPart;
             if (at >= 0) {
@@ -304,6 +316,11 @@ public class NtlmExtension implements DisposableBean {
 
             int colon = credPart.indexOf(':');
             if (colon < 0) {
+                return auth;
+            }
+            // Reject passwords containing `:` — the first-colon split would truncate the password,
+            // and silently shipping a truncated password upstream is strictly worse than 401.
+            if (credPart.indexOf(':', colon + 1) >= 0) {
                 return auth;
             }
             auth.username = credPart.substring(0, colon);
@@ -320,6 +337,13 @@ public class NtlmExtension implements DisposableBean {
                     auth.domain = domainPart;
                 }
                 else {
+                    // Reject multi-slash domain parts — a second `/` means the workstation contains
+                    // the separator, which NTCredentials cannot represent anyway.
+                    if (domainPart.indexOf('/', slash + 1) >= 0) {
+                        auth.username = null;
+                        auth.password = null;
+                        return auth;
+                    }
                     auth.domain = domainPart.substring(0, slash);
                     auth.workstation = domainPart.substring(slash + 1);
                 }

@@ -1,1 +1,5 @@
+# TEST FIXTURE — demo values only. The SecurityExtension profile name is the
+# only field the connector reads from here; there are no secrets, but keep
+# this file aligned with the matching extensions.security section in the
+# agent's config.yml when evolving the demo.
 profile: security

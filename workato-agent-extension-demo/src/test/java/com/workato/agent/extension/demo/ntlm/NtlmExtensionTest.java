@@ -113,6 +113,45 @@ class NtlmExtensionTest {
     }
 
     @Test
+    void passwordWithAmbiguousAtSignRejectedAs401() throws Exception {
+        // Two `@` in the header → first-occurrence split would silently truncate the password;
+        // detect the ambiguity and return 401 rather than shipping a wrong password upstream.
+        MvcResult result = agent.mockMvc().perform(post(agent.urlFor("/request"))
+                        .header("X-Workato-NTLM-auth", "user:p@ss@DOMAIN")
+                        .header("X-Workato-NTLM-url", upstream.urlFor("/ok")))
+                .andReturn();
+
+        assertEquals(401, result.getResponse().getStatus());
+        assertEquals(0, upstream.okHits.get(), "upstream must not be contacted when password is ambiguous");
+    }
+
+    @Test
+    void passwordWithAmbiguousColonRejectedAs401() throws Exception {
+        // Second `:` in the credential part → the first-colon split would leave the second half
+        // of the password in a bogus `pass` field; reject it to avoid silent auth failure upstream.
+        MvcResult result = agent.mockMvc().perform(post(agent.urlFor("/request"))
+                        .header("X-Workato-NTLM-auth", "user:pa:ss@DOMAIN")
+                        .header("X-Workato-NTLM-url", upstream.urlFor("/ok")))
+                .andReturn();
+
+        assertEquals(401, result.getResponse().getStatus());
+        assertEquals(0, upstream.okHits.get(), "upstream must not be contacted when password is ambiguous");
+    }
+
+    @Test
+    void workstationWithAmbiguousSlashRejectedAs401() throws Exception {
+        // Second `/` in the domain part → workstation would be `WS/extra`, which NTCredentials
+        // cannot represent; detect and 401 instead of silently sending garbage.
+        MvcResult result = agent.mockMvc().perform(post(agent.urlFor("/request"))
+                        .header("X-Workato-NTLM-auth", "user:pass@DOMAIN/WS/extra")
+                        .header("X-Workato-NTLM-url", upstream.urlFor("/ok")))
+                .andReturn();
+
+        assertEquals(401, result.getResponse().getStatus());
+        assertEquals(0, upstream.okHits.get(), "upstream must not be contacted when workstation is ambiguous");
+    }
+
+    @Test
     void rejectsNonHttpScheme() throws Exception {
         MvcResult result = agent.mockMvc().perform(post(agent.urlFor("/request"))
                         .header("X-Workato-NTLM-auth", "user:pass@DOMAIN")

@@ -51,8 +51,14 @@ public class TimerExtension implements InitializingBean, DisposableBean {
         });
     }
 
+    /**
+     * Liveness probe. Returns a tiny JSON body so Workato connector test lambdas can assert on a
+     * concrete success shape (`{"ok": true}`) rather than on the ambiguous empty-body / nil-parse
+     * behaviour of the SDK. Side-effect-free; safe to hit repeatedly.
+     */
     @GetMapping("/health")
-    public void health() {
+    public Map<String, Object> health() {
+        return Map.of("ok", true);
     }
 
     @PostMapping("/subscribe")

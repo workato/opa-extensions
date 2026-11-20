@@ -276,14 +276,50 @@ public final class DeployedAgentLauncher {
     }
 
     private static void cleanupAfterFailure(URLClassLoader cl, ClassLoader previousTccl,
-                                            Path generatedConfig, PrintStream originalStdout) {
-        Thread.currentThread().setContextClassLoader(previousTccl);
-        System.setOut(originalStdout);
-        try {
-            cl.close();
-        } catch (IOException ignored) {
+                                            Path generatedConfig, PrintStream originalStdout,
+                                            Map<String, String> systemPropertySnapshot) {
+        if (previousTccl != null) {
+            Thread.currentThread().setContextClassLoader(previousTccl);
+        }
+        if (originalStdout != null) {
+            System.setOut(originalStdout);
+        }
+        if (systemPropertySnapshot != null) {
+            restoreSystemProperties(systemPropertySnapshot);
+        }
+        if (cl != null) {
+            try {
+                cl.close();
+            } catch (IOException ignored) {
+            }
         }
         deleteQuietly(generatedConfig);
+    }
+
+    /**
+     * Capture the current JVM-wide values of the given system-property keys so that
+     * {@link RunningAgent#stop()} — or {@link #cleanupAfterFailure} on an early failure — can
+     * restore them. Keys absent from the JVM at capture time are recorded as {@code null} so that
+     * the restore step uses {@link System#clearProperty(String)}, undoing the {@link System#setProperty}
+     * the launcher performed at start time.
+     */
+    private static Map<String, String> snapshotSystemProperties(Set<String> keys) {
+        Map<String, String> snapshot = new LinkedHashMap<>(keys.size());
+        for (String k : keys) {
+            snapshot.put(k, System.getProperty(k));
+        }
+        return snapshot;
+    }
+
+    private static void restoreSystemProperties(Map<String, String> snapshot) {
+        for (Map.Entry<String, String> e : snapshot.entrySet()) {
+            if (e.getValue() == null) {
+                System.clearProperty(e.getKey());
+            }
+            else {
+                System.setProperty(e.getKey(), e.getValue());
+            }
+        }
     }
 
     // ---------------------------------------------------------------------------------------
@@ -386,20 +422,6 @@ public final class DeployedAgentLauncher {
         }
     }
 
-    private static HttpResponse<String> httpSend(HttpRequest req) {
-        HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(5))
-                .build();
-        try {
-            return client.send(req, HttpResponse.BodyHandlers.ofString());
-        } catch (IOException | InterruptedException e) {
-            if (e instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-            }
-            throw new IllegalStateException("HTTP " + req.method() + " " + req.uri() + " failed", e);
-        }
-    }
-
     private static HttpRequest.Builder baseRequest(String url) {
         return HttpRequest.newBuilder()
                 .uri(URI.create(url))
@@ -417,6 +439,48 @@ public final class DeployedAgentLauncher {
         }
         effectiveArgs.add(OPTION_CERT);
         effectiveArgs.add(joined.toString());
+    }
+
+    private static void validatePropertyEntries(String profileName, Map<String, Object> entries) {
+        for (Map.Entry<String, Object> e : entries.entrySet()) {
+            if (e.getKey() == null || e.getKey().isBlank()) {
+                throw new IllegalArgumentException(
+                        "Property key in map for profile '" + profileName + "' must not be null/blank");
+            }
+            if (e.getValue() == null) {
+                throw new IllegalArgumentException(
+                        "Property value for key '" + e.getKey() + "' on profile '" + profileName + "' must not be null");
+            }
+        }
+    }
+
+    /**
+     * Reflective method lookup that reports signature drift with a clear, actionable error rather
+     * than a bare {@code NoSuchMethodException}. Used for the two {@code Launcher} entry points —
+     * {@code start(String[])} and {@code shutdown()} — so a future change to the agent-core
+     * surface fails loudly at the first test boot instead of silently.
+     */
+    private static Method requireLauncherMethod(Class<?> launcherCls, String name, Class<?>... parameterTypes) {
+        try {
+            Method m = launcherCls.getDeclaredMethod(name, parameterTypes);
+            m.setAccessible(true);
+            return m;
+        } catch (NoSuchMethodException e) {
+            StringBuilder signature = new StringBuilder();
+            signature.append(name).append('(');
+            for (int i = 0; i < parameterTypes.length; i++) {
+                if (i > 0) {
+                    signature.append(", ");
+                }
+                signature.append(parameterTypes[i].getSimpleName());
+            }
+            signature.append(')');
+            throw new IllegalStateException(
+                    "Agent " + launcherCls.getName() + " does not declare the expected method `"
+                            + signature + "` — signature drift between agent-core and extension-test. "
+                            + "Pin the signature in WebhookApiProductionParityTest or update "
+                            + DeployedAgentLauncher.class.getName() + " to match the new surface.", e);
+        }
     }
 
     /**
@@ -495,11 +559,17 @@ public final class DeployedAgentLauncher {
     }
 
     /**
-     * Adds or overrides a single property on this runner's extension profile.
+     * Adds or overrides a single property on this runner's extension profile. {@code value} must
+     * be non-null — null-valued YAML keys silently override base-config values with null, which
+     * is almost never what the caller intends; use {@link #properties(Map)} if you need to clear
+     * a key via re-merge.
      */
     public DeployedAgentLauncher property(String key, Object value) {
         if (key == null || key.isBlank()) {
             throw new IllegalArgumentException("Property key must not be blank");
+        }
+        if (value == null) {
+            throw new IllegalArgumentException("Property value for key '" + key + "' must not be null");
         }
         extensionProfiles.get(profileName).put(key, value);
         return this;
@@ -507,12 +577,14 @@ public final class DeployedAgentLauncher {
 
     /**
      * Merges the given entries into this runner's extension profile, overriding any
-     * pre-existing keys. Keys not present in {@code entries} are preserved.
+     * pre-existing keys. Keys not present in {@code entries} are preserved. Null keys and null
+     * values are rejected for the same reason as {@link #property(String, Object)}.
      */
     public DeployedAgentLauncher properties(Map<String, Object> entries) {
         if (entries == null) {
             throw new IllegalArgumentException("Properties map must not be null");
         }
+        validatePropertyEntries(profileName, entries);
         extensionProfiles.get(profileName).putAll(entries);
         return this;
     }
@@ -540,6 +612,10 @@ public final class DeployedAgentLauncher {
         if (key == null || key.isBlank()) {
             throw new IllegalArgumentException("Property key must not be blank");
         }
+        if (value == null) {
+            throw new IllegalArgumentException(
+                    "Property value for key '" + key + "' on profile '" + profileName + "' must not be null");
+        }
         extensionProfiles.computeIfAbsent(profileName, k -> new LinkedHashMap<>()).put(key, value);
         return this;
     }
@@ -554,6 +630,7 @@ public final class DeployedAgentLauncher {
         if (overrides == null) {
             throw new IllegalArgumentException("Overrides map for '" + profileName + "' must not be null");
         }
+        validatePropertyEntries(profileName, overrides);
         extensionProfiles.computeIfAbsent(profileName, k -> new LinkedHashMap<>()).putAll(overrides);
         return this;
     }
@@ -565,7 +642,13 @@ public final class DeployedAgentLauncher {
      * isolated classloader can load them too.
      */
     public DeployedAgentLauncher extensionCodeSource(Class<?>... classes) {
+        if (classes == null) {
+            throw new IllegalArgumentException("Classes varargs must not be null");
+        }
         for (Class<?> cls : classes) {
+            if (cls == null) {
+                throw new IllegalArgumentException("Classes varargs must not contain null entries");
+            }
             extensionUrls.add(codeSourceOf(cls));
         }
         return this;
@@ -575,7 +658,13 @@ public final class DeployedAgentLauncher {
      * Adds explicit paths (classes directories or jar files) as extension classpath entries.
      */
     public DeployedAgentLauncher extensionCodeSource(Path... paths) {
+        if (paths == null) {
+            throw new IllegalArgumentException("Paths varargs must not be null");
+        }
         for (Path p : paths) {
+            if (p == null) {
+                throw new IllegalArgumentException("Paths varargs must not contain null entries");
+            }
             try {
                 extensionUrls.add(p.toUri().toURL());
             } catch (MalformedURLException e) {
@@ -590,14 +679,30 @@ public final class DeployedAgentLauncher {
      * strings {@code run.sh} would pass to {@code java -jar agent-launcher.jar}.
      */
     public DeployedAgentLauncher argument(String... args) {
+        if (args == null) {
+            throw new IllegalArgumentException("Argument varargs must not be null");
+        }
+        for (String a : args) {
+            if (a == null) {
+                throw new IllegalArgumentException("Argument varargs must not contain null entries");
+            }
+        }
         Collections.addAll(this.arguments, args);
         return this;
     }
 
     /**
-     * Sets a JVM system property before the agent starts.
+     * Sets a JVM system property before the agent starts. Both {@code key} and {@code value} must
+     * be non-null; the previous value (if any) is captured on {@link #start()} and restored on
+     * {@link RunningAgent#stop()} so test methods do not pollute each other's JVM state.
      */
     public DeployedAgentLauncher systemProperty(String key, String value) {
+        if (key == null || key.isBlank()) {
+            throw new IllegalArgumentException("System property key must not be blank");
+        }
+        if (value == null) {
+            throw new IllegalArgumentException("System property value for '" + key + "' must not be null");
+        }
         systemProperties.put(key, value);
         return this;
     }
@@ -643,15 +748,18 @@ public final class DeployedAgentLauncher {
      * root.
      */
     public DeployedAgentLauncher baseConfig(Path path) {
+        if (path == null) {
+            throw new IllegalArgumentException("Base config path must not be null");
+        }
         this.baseConfigPath = path;
         return this;
     }
 
     public RunningAgent start() {
+        // ---- 1. Resolve layout — may throw before any global mutation ----
         Path libs = resolveDistPath();
         addInferredExtensionSources();
         List<URL> composite = buildClasspath(libs);
-        systemProperties.forEach(System::setProperty);
 
         List<String> effectiveArgs = new ArrayList<>(arguments);
         int effectivePort = -1;
@@ -675,6 +783,11 @@ public final class DeployedAgentLauncher {
 
         logStartupSummary(effectiveArgs, effectivePort);
 
+        // ---- 2. Snapshot JVM-global state BEFORE mutation, so cleanup can restore it ----
+        // Captured even on the failure path via cleanupAfterFailure(..., systemPropertySnapshot).
+        Map<String, String> systemPropertySnapshot = snapshotSystemProperties(systemProperties.keySet());
+        systemProperties.forEach(System::setProperty);
+
         URLClassLoader agentClassLoader = new URLClassLoader(
                 composite.toArray(new URL[0]),
                 ClassLoader.getPlatformClassLoader()
@@ -685,32 +798,57 @@ public final class DeployedAgentLauncher {
         // RunningAgent.awaitGatewayConnected to scan the agent's logs for connection markers.
         PrintStream originalStdout = System.out;
         ByteArrayOutputStream stdoutCapture = new ByteArrayOutputStream();
-        System.setOut(new PrintStream(new TeeOutputStream(originalStdout, stdoutCapture), true, StandardCharsets.UTF_8));
+        TeeOutputStream tee = new TeeOutputStream(originalStdout, stdoutCapture);
+        System.setOut(new PrintStream(tee, true, StandardCharsets.UTF_8));
 
+        // Save the caller's TCCL so stop() can restore it; set the agent loader as TCCL so
+        // Launcher.start — and any agent-side thread factories inheriting it — resolve classes
+        // against the agent's isolated URLClassLoader. We put the TCCL back to the caller's
+        // choice immediately after Launcher.start returns (see step 4) so the caller thread
+        // does not keep the agent loader bound after the API call completes.
         ClassLoader previousTccl = Thread.currentThread().getContextClassLoader();
         Thread.currentThread().setContextClassLoader(agentClassLoader);
+        Class<?> launcherCls;
         try {
             // Running Main's static initializer sets the JVM-wide system properties the agent
             // expects (java.awt.headless, netty / vertx DNS tuning, etc.). We then call
             // Launcher.start directly so a startup failure throws instead of exiting the JVM.
             Class.forName(MAIN_CLASS, true, agentClassLoader);
-            Class<?> launcherCls = Class.forName(LAUNCHER_CLASS, true, agentClassLoader);
-            Method startMethod = launcherCls.getDeclaredMethod("start", String[].class);
-            startMethod.setAccessible(true);
+            launcherCls = Class.forName(LAUNCHER_CLASS, true, agentClassLoader);
+            Method startMethod = requireLauncherMethod(launcherCls, "start", String[].class);
             Object result = startMethod.invoke(null, (Object) effectiveArgs.toArray(new String[0]));
-            if (!Boolean.TRUE.equals(result)) {
+            // Pin the Boolean contract — if the agent ever evolves Launcher.start to a different
+            // return shape (void, enum, Future), surface that as a fail-loud signature-drift
+            // error rather than silently misreporting start-up success/failure.
+            if (result == null) {
+                throw new IllegalStateException(
+                        "Agent Launcher.start returned null — signature drift: expected Boolean (TRUE on success, "
+                                + "FALSE on failure). Check that " + LAUNCHER_CLASS + " still declares"
+                                + " `public static Boolean start(String[])`.");
+            }
+            if (!(result instanceof Boolean started)) {
+                throw new IllegalStateException(
+                        "Agent Launcher.start returned " + result.getClass().getName()
+                                + " — signature drift: expected Boolean. Check " + LAUNCHER_CLASS + ".");
+            }
+            if (!started) {
                 throw new IllegalStateException("Agent failed to start — check logs");
             }
-            return new RunningAgent(agentClassLoader, launcherCls, previousTccl, generatedConfig,
-                    effectivePort, profileName, snapshotProfiles(), stdoutCapture, originalStdout);
         } catch (RuntimeException ex) {
-            cleanupAfterFailure(agentClassLoader, previousTccl, generatedConfig, originalStdout);
+            cleanupAfterFailure(agentClassLoader, previousTccl, generatedConfig, originalStdout, systemPropertySnapshot);
             throw ex;
         } catch (ReflectiveOperationException ex) {
-            cleanupAfterFailure(agentClassLoader, previousTccl, generatedConfig, originalStdout);
+            cleanupAfterFailure(agentClassLoader, previousTccl, generatedConfig, originalStdout, systemPropertySnapshot);
             Throwable cause = ex instanceof InvocationTargetException i ? i.getTargetException() : ex;
             throw new IllegalStateException("Reflective invocation of agent Launcher failed: " + cause, cause);
         }
+
+        // ---- 4. Restore caller's TCCL — agent threads inherited the agent loader at start
+        // time, so the caller's test thread no longer needs to keep it bound. stop() will set
+        // it back to agentClassLoader before invoking Launcher.shutdown.
+        Thread.currentThread().setContextClassLoader(previousTccl);
+        return new RunningAgent(agentClassLoader, launcherCls, previousTccl, generatedConfig,
+                effectivePort, profileName, snapshotProfiles(), tee, originalStdout, systemPropertySnapshot);
     }
 
     /**
@@ -880,12 +1018,17 @@ public final class DeployedAgentLauncher {
      * Minimal {@link OutputStream} tee: every write is forwarded to both delegates. Used to
      * duplicate the agent's console output into a buffer scanned by
      * {@link RunningAgent#awaitGatewayConnected(Duration)}.
+     *
+     * <p>{@link #snapshotSecondaryUtf8()} is the only safe way for the watcher thread to read the
+     * secondary buffer — it shares the same monitor as {@link #write(int)} /
+     * {@link #write(byte[], int, int)}, which guarantees the returned string never contains a
+     * half-written multibyte sequence.
      */
     private static final class TeeOutputStream extends OutputStream {
         private final OutputStream primary;
-        private final OutputStream secondary;
+        private final ByteArrayOutputStream secondary;
 
-        TeeOutputStream(OutputStream primary, OutputStream secondary) {
+        TeeOutputStream(OutputStream primary, ByteArrayOutputStream secondary) {
             this.primary = primary;
             this.secondary = secondary;
         }
@@ -908,6 +1051,15 @@ public final class DeployedAgentLauncher {
             secondary.flush();
         }
 
+        /**
+         * Atomic snapshot of the secondary buffer as a UTF-8 string. Synchronises on the same
+         * monitor the write methods use, so the returned string is guaranteed consistent even
+         * under concurrent writes from the agent's log threads.
+         */
+        synchronized String snapshotSecondaryUtf8() {
+            return secondary.toString(StandardCharsets.UTF_8);
+        }
+
         @Override
         public void close() {
             // Do not close the primary (original System.out) — it is restored by the runner on
@@ -928,14 +1080,22 @@ public final class DeployedAgentLauncher {
         private final int port;
         private final String profileName;
         private final Map<String, Map<String, Object>> profiles;
-        private final ByteArrayOutputStream stdoutCapture;
+        private final TeeOutputStream tee;
         private final PrintStream originalStdout;
+        private final Map<String, String> systemPropertySnapshot;
+        // One shared HttpClient across all httpGet / httpPost / send calls — each fresh
+        // HttpClient spins up its own selector thread + executor, and the JDK does not GC them
+        // promptly. Shared instance is thread-safe and reusable.
+        private final HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(5))
+                .build();
         private boolean stopped;
 
         private RunningAgent(URLClassLoader classLoader, Class<?> launcherClass,
                              ClassLoader previousContextClassLoader, Path generatedConfig,
                              int port, String profileName, Map<String, Map<String, Object>> profiles,
-                             ByteArrayOutputStream stdoutCapture, PrintStream originalStdout) {
+                             TeeOutputStream tee, PrintStream originalStdout,
+                             Map<String, String> systemPropertySnapshot) {
             this.classLoader = classLoader;
             this.launcherClass = launcherClass;
             this.previousContextClassLoader = previousContextClassLoader;
@@ -943,8 +1103,20 @@ public final class DeployedAgentLauncher {
             this.port = port;
             this.profileName = profileName;
             this.profiles = profiles;
-            this.stdoutCapture = stdoutCapture;
+            this.tee = tee;
             this.originalStdout = originalStdout;
+            this.systemPropertySnapshot = systemPropertySnapshot;
+        }
+
+        private HttpResponse<String> sendOnSharedClient(HttpRequest req) {
+            try {
+                return httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            } catch (IOException | InterruptedException e) {
+                if (e instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
+                throw new IllegalStateException("HTTP " + req.method() + " " + req.uri() + " failed", e);
+            }
         }
 
         public ClassLoader classLoader() {
@@ -1033,13 +1205,24 @@ public final class DeployedAgentLauncher {
                 throws java.util.concurrent.TimeoutException, InterruptedException {
             long deadlineNanos = System.nanoTime() + timeout.toNanos();
             while (true) {
-                String captured = stdoutCapture.toString(StandardCharsets.UTF_8);
+                // snapshotSecondaryUtf8 holds the tee's own monitor — guarantees we read a
+                // consistent UTF-8 sequence rather than a byte array that an agent-thread
+                // write might be partway through.
+                String captured = tee.snapshotSecondaryUtf8();
                 int idx = captured.indexOf(GATEWAY_CONNECTED_MARKER);
                 if (idx >= 0) {
                     int lineStart = captured.lastIndexOf('\n', idx) + 1;
                     int lineEnd = captured.indexOf('\n', idx);
+                    // If the newline terminating the marker line hasn't been flushed yet, wait
+                    // one more tick rather than returning a truncated line.
                     if (lineEnd < 0) {
-                        lineEnd = captured.length();
+                        if (System.nanoTime() >= deadlineNanos) {
+                            // Give the caller the partial line at the deadline — strictly better
+                            // than timing out with a successful marker in the buffer.
+                            return captured.substring(lineStart);
+                        }
+                        Thread.sleep(50);
+                        continue;
                     }
                     return captured.substring(lineStart, lineEnd);
                 }
@@ -1062,7 +1245,7 @@ public final class DeployedAgentLauncher {
          * not declare the controller class.
          */
         public <C, R> HttpResponse<String> httpGet(AgentExtensionHarness.Ref0<C, R> methodRef) {
-            return httpSend(buildControllerRequest(methodRef, new Object[0], HttpMethod.GET, null).build());
+            return sendOnSharedClient(buildControllerRequest(methodRef, new Object[0], HttpMethod.GET, null).build());
         }
 
         /**
@@ -1075,7 +1258,7 @@ public final class DeployedAgentLauncher {
          */
         public <C, A, R> HttpResponse<String> httpGet(AgentExtensionHarness.Ref1<C, A, R> methodRef,
                                                       Object... pathVars) {
-            return httpSend(buildControllerRequest(methodRef, pathVars, HttpMethod.GET, null).build());
+            return sendOnSharedClient(buildControllerRequest(methodRef, pathVars, HttpMethod.GET, null).build());
         }
 
         /**
@@ -1083,7 +1266,7 @@ public final class DeployedAgentLauncher {
          */
         public <C, A1, A2, R> HttpResponse<String> httpGet(AgentExtensionHarness.Ref2<C, A1, A2, R> methodRef,
                                                            Object... pathVars) {
-            return httpSend(buildControllerRequest(methodRef, pathVars, HttpMethod.GET, null).build());
+            return sendOnSharedClient(buildControllerRequest(methodRef, pathVars, HttpMethod.GET, null).build());
         }
 
         /**
@@ -1091,7 +1274,7 @@ public final class DeployedAgentLauncher {
          */
         public <C, A1, A2, A3, R> HttpResponse<String> httpGet(
                 AgentExtensionHarness.Ref3<C, A1, A2, A3, R> methodRef, Object... pathVars) {
-            return httpSend(buildControllerRequest(methodRef, pathVars, HttpMethod.GET, null).build());
+            return sendOnSharedClient(buildControllerRequest(methodRef, pathVars, HttpMethod.GET, null).build());
         }
 
         /**
@@ -1099,7 +1282,7 @@ public final class DeployedAgentLauncher {
          */
         public <C, A1, A2, A3, A4, R> HttpResponse<String> httpGet(
                 AgentExtensionHarness.Ref4<C, A1, A2, A3, A4, R> methodRef, Object... pathVars) {
-            return httpSend(buildControllerRequest(methodRef, pathVars, HttpMethod.GET, null).build());
+            return sendOnSharedClient(buildControllerRequest(methodRef, pathVars, HttpMethod.GET, null).build());
         }
 
         /**
@@ -1107,7 +1290,7 @@ public final class DeployedAgentLauncher {
          */
         public <C, A1, A2, A3, A4, A5, R> HttpResponse<String> httpGet(
                 AgentExtensionHarness.Ref5<C, A1, A2, A3, A4, A5, R> methodRef, Object... pathVars) {
-            return httpSend(buildControllerRequest(methodRef, pathVars, HttpMethod.GET, null).build());
+            return sendOnSharedClient(buildControllerRequest(methodRef, pathVars, HttpMethod.GET, null).build());
         }
 
         /**
@@ -1115,7 +1298,7 @@ public final class DeployedAgentLauncher {
          */
         public <C, A1, A2, A3, A4, A5, A6, R> HttpResponse<String> httpGet(
                 AgentExtensionHarness.Ref6<C, A1, A2, A3, A4, A5, A6, R> methodRef, Object... pathVars) {
-            return httpSend(buildControllerRequest(methodRef, pathVars, HttpMethod.GET, null).build());
+            return sendOnSharedClient(buildControllerRequest(methodRef, pathVars, HttpMethod.GET, null).build());
         }
 
         /**
@@ -1123,7 +1306,7 @@ public final class DeployedAgentLauncher {
          */
         public <C, A1, A2, A3, A4, A5, A6, A7, R> HttpResponse<String> httpGet(
                 AgentExtensionHarness.Ref7<C, A1, A2, A3, A4, A5, A6, A7, R> methodRef, Object... pathVars) {
-            return httpSend(buildControllerRequest(methodRef, pathVars, HttpMethod.GET, null).build());
+            return sendOnSharedClient(buildControllerRequest(methodRef, pathVars, HttpMethod.GET, null).build());
         }
 
         /**
@@ -1131,7 +1314,7 @@ public final class DeployedAgentLauncher {
          */
         public <C, A1, A2, A3, A4, A5, A6, A7, A8, R> HttpResponse<String> httpGet(
                 AgentExtensionHarness.Ref8<C, A1, A2, A3, A4, A5, A6, A7, A8, R> methodRef, Object... pathVars) {
-            return httpSend(buildControllerRequest(methodRef, pathVars, HttpMethod.GET, null).build());
+            return sendOnSharedClient(buildControllerRequest(methodRef, pathVars, HttpMethod.GET, null).build());
         }
 
         /**
@@ -1139,7 +1322,7 @@ public final class DeployedAgentLauncher {
          */
         public <C, A1, A2, A3, A4, A5, A6, A7, A8, A9, R> HttpResponse<String> httpGet(
                 AgentExtensionHarness.Ref9<C, A1, A2, A3, A4, A5, A6, A7, A8, A9, R> methodRef, Object... pathVars) {
-            return httpSend(buildControllerRequest(methodRef, pathVars, HttpMethod.GET, null).build());
+            return sendOnSharedClient(buildControllerRequest(methodRef, pathVars, HttpMethod.GET, null).build());
         }
 
         /**
@@ -1147,7 +1330,7 @@ public final class DeployedAgentLauncher {
          */
         public <C, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, R> HttpResponse<String> httpGet(
                 AgentExtensionHarness.Ref10<C, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, R> methodRef, Object... pathVars) {
-            return httpSend(buildControllerRequest(methodRef, pathVars, HttpMethod.GET, null).build());
+            return sendOnSharedClient(buildControllerRequest(methodRef, pathVars, HttpMethod.GET, null).build());
         }
 
         /**
@@ -1157,7 +1340,7 @@ public final class DeployedAgentLauncher {
          * be {@code null} for an empty POST.
          */
         public <C, R> HttpResponse<String> httpPost(AgentExtensionHarness.Ref0<C, R> methodRef, Object body) {
-            return httpSend(buildControllerRequest(methodRef, new Object[0], HttpMethod.POST, body).build());
+            return sendOnSharedClient(buildControllerRequest(methodRef, new Object[0], HttpMethod.POST, body).build());
         }
 
         /**
@@ -1168,7 +1351,7 @@ public final class DeployedAgentLauncher {
          */
         public <C, A, R> HttpResponse<String> httpPost(AgentExtensionHarness.Ref1<C, A, R> methodRef,
                                                        Object body, Object... pathVars) {
-            return httpSend(buildControllerRequest(methodRef, pathVars, HttpMethod.POST, body).build());
+            return sendOnSharedClient(buildControllerRequest(methodRef, pathVars, HttpMethod.POST, body).build());
         }
 
         /**
@@ -1178,7 +1361,7 @@ public final class DeployedAgentLauncher {
          */
         public <C, A1, A2, R> HttpResponse<String> httpPost(AgentExtensionHarness.Ref2<C, A1, A2, R> methodRef,
                                                             Object body, Object... pathVars) {
-            return httpSend(buildControllerRequest(methodRef, pathVars, HttpMethod.POST, body).build());
+            return sendOnSharedClient(buildControllerRequest(methodRef, pathVars, HttpMethod.POST, body).build());
         }
 
         /**
@@ -1187,7 +1370,7 @@ public final class DeployedAgentLauncher {
          */
         public <C, A1, A2, A3, R> HttpResponse<String> httpPost(
                 AgentExtensionHarness.Ref3<C, A1, A2, A3, R> methodRef, Object body, Object... pathVars) {
-            return httpSend(buildControllerRequest(methodRef, pathVars, HttpMethod.POST, body).build());
+            return sendOnSharedClient(buildControllerRequest(methodRef, pathVars, HttpMethod.POST, body).build());
         }
 
         /**
@@ -1195,7 +1378,7 @@ public final class DeployedAgentLauncher {
          */
         public <C, A1, A2, A3, A4, R> HttpResponse<String> httpPost(
                 AgentExtensionHarness.Ref4<C, A1, A2, A3, A4, R> methodRef, Object body, Object... pathVars) {
-            return httpSend(buildControllerRequest(methodRef, pathVars, HttpMethod.POST, body).build());
+            return sendOnSharedClient(buildControllerRequest(methodRef, pathVars, HttpMethod.POST, body).build());
         }
 
         /**
@@ -1203,7 +1386,7 @@ public final class DeployedAgentLauncher {
          */
         public <C, A1, A2, A3, A4, A5, R> HttpResponse<String> httpPost(
                 AgentExtensionHarness.Ref5<C, A1, A2, A3, A4, A5, R> methodRef, Object body, Object... pathVars) {
-            return httpSend(buildControllerRequest(methodRef, pathVars, HttpMethod.POST, body).build());
+            return sendOnSharedClient(buildControllerRequest(methodRef, pathVars, HttpMethod.POST, body).build());
         }
 
         /**
@@ -1211,7 +1394,7 @@ public final class DeployedAgentLauncher {
          */
         public <C, A1, A2, A3, A4, A5, A6, R> HttpResponse<String> httpPost(
                 AgentExtensionHarness.Ref6<C, A1, A2, A3, A4, A5, A6, R> methodRef, Object body, Object... pathVars) {
-            return httpSend(buildControllerRequest(methodRef, pathVars, HttpMethod.POST, body).build());
+            return sendOnSharedClient(buildControllerRequest(methodRef, pathVars, HttpMethod.POST, body).build());
         }
 
         /**
@@ -1219,7 +1402,7 @@ public final class DeployedAgentLauncher {
          */
         public <C, A1, A2, A3, A4, A5, A6, A7, R> HttpResponse<String> httpPost(
                 AgentExtensionHarness.Ref7<C, A1, A2, A3, A4, A5, A6, A7, R> methodRef, Object body, Object... pathVars) {
-            return httpSend(buildControllerRequest(methodRef, pathVars, HttpMethod.POST, body).build());
+            return sendOnSharedClient(buildControllerRequest(methodRef, pathVars, HttpMethod.POST, body).build());
         }
 
         /**
@@ -1227,7 +1410,7 @@ public final class DeployedAgentLauncher {
          */
         public <C, A1, A2, A3, A4, A5, A6, A7, A8, R> HttpResponse<String> httpPost(
                 AgentExtensionHarness.Ref8<C, A1, A2, A3, A4, A5, A6, A7, A8, R> methodRef, Object body, Object... pathVars) {
-            return httpSend(buildControllerRequest(methodRef, pathVars, HttpMethod.POST, body).build());
+            return sendOnSharedClient(buildControllerRequest(methodRef, pathVars, HttpMethod.POST, body).build());
         }
 
         /**
@@ -1235,7 +1418,7 @@ public final class DeployedAgentLauncher {
          */
         public <C, A1, A2, A3, A4, A5, A6, A7, A8, A9, R> HttpResponse<String> httpPost(
                 AgentExtensionHarness.Ref9<C, A1, A2, A3, A4, A5, A6, A7, A8, A9, R> methodRef, Object body, Object... pathVars) {
-            return httpSend(buildControllerRequest(methodRef, pathVars, HttpMethod.POST, body).build());
+            return sendOnSharedClient(buildControllerRequest(methodRef, pathVars, HttpMethod.POST, body).build());
         }
 
         /**
@@ -1243,7 +1426,7 @@ public final class DeployedAgentLauncher {
          */
         public <C, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, R> HttpResponse<String> httpPost(
                 AgentExtensionHarness.Ref10<C, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, R> methodRef, Object body, Object... pathVars) {
-            return httpSend(buildControllerRequest(methodRef, pathVars, HttpMethod.POST, body).build());
+            return sendOnSharedClient(buildControllerRequest(methodRef, pathVars, HttpMethod.POST, body).build());
         }
 
         /**
@@ -1449,7 +1632,7 @@ public final class DeployedAgentLauncher {
          * request through the builder.
          */
         public HttpResponse<String> send(HttpRequest request) {
-            return httpSend(request);
+            return sendOnSharedClient(request);
         }
 
         private HttpRequest.Builder buildControllerRequest(java.io.Serializable methodRef, Object[] pathVars,
@@ -1528,27 +1711,53 @@ public final class DeployedAgentLauncher {
             }
         }
 
+        /**
+         * Shut down the agent, release the isolated classloader, and restore JVM-global state
+         * (TCCL, {@code System.out}, system properties) touched by {@link #start()}.
+         *
+         * <p>Ordering is deliberate: the agent (Spring context, Jetty, netty event loops) may
+         * still hold references into {@code classLoader} while {@code Launcher.shutdown()} is
+         * running, so the loader is only closed and the generated config file deleted <em>after</em>
+         * shutdown returns successfully. If {@code shutdown()} throws, the test-runner-visible
+         * globals (TCCL, stdout, system properties) are still restored on a best-effort basis so
+         * the surrounding JVM stays usable — but the classloader and generated config are left
+         * intact so the still-live agent can keep loading classes while the caller investigates.
+         * The {@code stopped} flag is set only on the success path so a caller can retry.
+         */
         public synchronized void stop() {
             if (stopped) {
                 return;
             }
-            stopped = true;
+
+            // Re-assert the agent loader as this thread's TCCL — Launcher.shutdown reaches into
+            // Spring / netty cleanup paths that resolve classes through TCCL. start() restored
+            // the caller's TCCL immediately after Launcher.start, so without this line the
+            // shutdown would run under whatever TCCL the test thread is now carrying.
+            Thread.currentThread().setContextClassLoader(classLoader);
             try {
-                Method shutdown = launcherClass.getDeclaredMethod("shutdown");
-                shutdown.setAccessible(true);
+                Method shutdown = requireLauncherMethod(launcherClass, "shutdown");
                 shutdown.invoke(null);
             } catch (ReflectiveOperationException e) {
-                Throwable cause = e instanceof InvocationTargetException i ? i.getTargetException() : e;
-                throw new IllegalStateException("Reflective invocation of Launcher.shutdown failed: " + cause, cause);
-            } finally {
+                // Agent-side shutdown faulted — agent may still be alive and holding references
+                // into the classloader. Restore test-runner globals so the JVM is usable, but do
+                // NOT close the loader or delete the generated config.
                 Thread.currentThread().setContextClassLoader(previousContextClassLoader);
                 System.setOut(originalStdout);
-                try {
-                    classLoader.close();
-                } catch (IOException ignored) {
-                }
-                deleteQuietly(generatedConfig);
+                restoreSystemProperties(systemPropertySnapshot);
+                Throwable cause = e instanceof InvocationTargetException i ? i.getTargetException() : e;
+                throw new IllegalStateException("Reflective invocation of Launcher.shutdown failed: " + cause, cause);
             }
+
+            // Shutdown succeeded → agent no longer references the classloader. Full teardown.
+            stopped = true;
+            Thread.currentThread().setContextClassLoader(previousContextClassLoader);
+            System.setOut(originalStdout);
+            restoreSystemProperties(systemPropertySnapshot);
+            try {
+                classLoader.close();
+            } catch (IOException ignored) {
+            }
+            deleteQuietly(generatedConfig);
         }
 
         @Override

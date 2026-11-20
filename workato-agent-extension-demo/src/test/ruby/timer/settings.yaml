@@ -1,2 +1,5 @@
+# TEST FIXTURE — demo values only. `connection_id` is an opaque identifier
+# echoed back to the extension on subscribe/unsubscribe so the agent can key
+# subscriptions per connection; no credentials in this file.
 profile: timer
 connection_id: test-conn

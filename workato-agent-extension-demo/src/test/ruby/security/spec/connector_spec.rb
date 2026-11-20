@@ -39,9 +39,13 @@ RSpec.describe 'onprem security connector' do
   end
 
   describe 'test' do
-    it 'pings the /ping endpoint without raising' do
+    it 'pings the /ping endpoint and returns the truthy ping payload' do
       VCR.use_cassette('security_connection_test') do
-        expect { connector.test(settings) }.not_to raise_error
+        result = connector.test(settings)
+        # The SDK treats any truthy return as a successful connection test; the Java
+        # extension emits {"ok": true} from /ping so we pin the shape too.
+        expect(result).to be_truthy
+        expect(result['ok']).to be(true)
       end
     end
   end
