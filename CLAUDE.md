@@ -9,11 +9,11 @@ touching.
 OPA (On-Premise Agent) extension workspace. Three Gradle modules, all compiled
 from source and built together:
 
-| Module                              | Purpose                                                                                                                                                                                                                                         | Per-module guidance                                                                                                                                                                     |
-|-------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **`workato-agent-extension-api/`**  | Public Extension API that customer extensions compile against. Published to Nexus (future work); the agent (OPA) consumes it from there and provides the interfaces at runtime.                                                                 | [`workato-agent-extension-api/CLAUDE.md`](workato-agent-extension-api/CLAUDE.md) + customer-facing [`workato-agent-extension-api/README.md`](workato-agent-extension-api/README.md)     |
-| **`workato-agent-extension-test/`** | Test-harness library. Depends on `-api`. Customers put it on their test classpath to drive their extension through a Spring `MockMvc` runtime without launching the real agent. Also publishable to Nexus.                                      | [`workato-agent-extension-test/CLAUDE.md`](workato-agent-extension-test/CLAUDE.md) + customer-facing [`workato-agent-extension-test/README.md`](workato-agent-extension-test/README.md) |
-| **`workato-agent-extension-demo/`** | Sample extensions (`security`, `ntlm`, `timer`) plus their JUnit tests and Workato custom connectors (Ruby). Not published — serves as an end-to-end exerciser of the two artifacts above and as a reference implementation for customer teams. | [`workato-agent-extension-demo/CLAUDE.md`](workato-agent-extension-demo/CLAUDE.md) + customer-facing [`workato-agent-extension-demo/README.md`](workato-agent-extension-demo/README.md) |
+| Module                              | Purpose                                                                                                                                                                                                                                                           | Per-module guidance                                                                                                                                                                     |
+|-------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **`workato-agent-extension-api/`**  | Public Extension API that customer extensions compile against. Published to Nexus as a regular library (jar + sources + javadoc); the agent (OPA) consumes it from there and provides the interfaces at runtime.                                                  | [`workato-agent-extension-api/CLAUDE.md`](workato-agent-extension-api/CLAUDE.md) + customer-facing [`workato-agent-extension-api/README.md`](workato-agent-extension-api/README.md)     |
+| **`workato-agent-extension-test/`** | Test-harness library. Depends on `-api`. Customers put it on their test classpath to drive their extension through a Spring `MockMvc` runtime without launching the real agent. Published to Nexus as a regular library.                                          | [`workato-agent-extension-test/CLAUDE.md`](workato-agent-extension-test/CLAUDE.md) + customer-facing [`workato-agent-extension-test/README.md`](workato-agent-extension-test/README.md) |
+| **`workato-agent-extension-demo/`** | Sample extensions (`security`, `ntlm`, `timer`) plus their JUnit tests and Workato custom connectors (Ruby). Published to Nexus as a shaded fat jar — the primary role is end-to-end exercise of the two artifacts above and as a reference customers clone from. | [`workato-agent-extension-demo/CLAUDE.md`](workato-agent-extension-demo/CLAUDE.md) + customer-facing [`workato-agent-extension-demo/README.md`](workato-agent-extension-demo/README.md) |
 
 Both `-api` and `-test` were previously developed inside the OPA repo
 (`modules/extension-api`, `modules/extension-test`). They were moved here so
@@ -133,6 +133,105 @@ Mirrors OPA's `modules/version-catalog` pins:
   Ruby satisfies the constraint). Only the demo module uses Ruby — see
   [`workato-agent-extension-demo/CLAUDE.md`](workato-agent-extension-demo/CLAUDE.md)
   for connector conventions.
+
+## Versioning and publishing
+
+### Version resolution
+
+The artifact version is computed at configuration time in root `build.gradle`
+from three inputs:
+
+| Input          | Source                                                                                                                                       | Example          |
+|----------------|----------------------------------------------------------------------------------------------------------------------------------------------|------------------|
+| `baseVersion`  | `gradle.properties` (`baseVersion=0.1.0`). Override with `-PbaseVersion=...`.                                                                | `0.1.0`          |
+| `release` flag | `-Prelease` on the Gradle command line.                                                                                                      | present / absent |
+| Current branch | Env vars first (`GITHUB_REF_NAME`, `CI_COMMIT_REF_NAME`, `BUILD_SOURCEBRANCHNAME`), else `git rev-parse --abbrev-ref HEAD` run in `rootDir`. | `release-0.1.0`  |
+
+The three combine as:
+
+| Flag / branch                 | Effective version                            | Target repository (Nexus) |
+|-------------------------------|----------------------------------------------|---------------------------|
+| `-Prelease`                   | `${baseVersion}`                             | `maven-releases`          |
+| no flag, on `master` / `main` | `${baseVersion}-SNAPSHOT`                    | `maven-snapshots`         |
+| no flag, any other branch     | `${baseVersion}-${sanitizedBranch}-SNAPSHOT` | `maven-snapshots`         |
+| no flag, branch undetectable  | `${baseVersion}-SNAPSHOT` (fallback)         | `maven-snapshots`         |
+
+`sanitizedBranch` replaces anything outside `[A-Za-z0-9._-]` with `-` and
+collapses consecutive dashes — Maven versions cannot contain `/` or spaces.
+The sanitised branch is directly recoverable from the published version
+string, so any SNAPSHOT in Nexus can be traced back to the branch it came
+from.
+
+### Publication layout
+
+| Module                         | Publication content                                   | POM dependencies                                                      |
+|--------------------------------|-------------------------------------------------------|-----------------------------------------------------------------------|
+| `workato-agent-extension-api`  | main jar + sources + javadoc (from `components.java`) | `platform(workato-agent-bom)` + Jackson `compileOnly`                 |
+| `workato-agent-extension-test` | main jar + sources + javadoc (from `components.java`) | `platform(workato-agent-bom)` + api-module GAV + Spring/Jackson/JUnit |
+| `workato-agent-extension-demo` | shaded fat jar only (`tasks.named('jar')`)            | none — the fat jar has everything bundled                             |
+
+All three publications land in the Workato Nexus
+(`nexus.infra.wktodev.net/repository/maven-releases` or `/maven-snapshots`)
+when `./gradlew publish` runs. `publishToMavenLocal` installs them under
+`~/.m2/repository/com/workato/agent/`.
+
+### Credentials
+
+**Primary path — GitHub Actions.** Publish does not happen from developer
+laptops; it runs in `.github/workflows/ci.yml` as the `publish` job (gated
+by `needs: build`, so a red test suite blocks every upload). The job reads
+credentials from repository secrets:
+
+| GitHub secret    | Injected as Gradle property                                                      |
+|------------------|----------------------------------------------------------------------------------|
+| `NEXUS_USERNAME` | `ORG_GRADLE_PROJECT_nexusUsername` → `nexusUsername`                             |
+| `NEXUS_PASSWORD` | `ORG_GRADLE_PROJECT_nexusPassword` → `nexusPassword`                             |
+| `GITHUB_TOKEN`   | provided automatically, consumed by the `gh` CLI inside the `githubRelease` task |
+
+Configure `NEXUS_USERNAME` / `NEXUS_PASSWORD` once at the repo level
+(*Settings → Secrets and variables → Actions*). The workflow runs on every
+branch push and on manual dispatch (see "Release commands" below).
+
+**Secondary path — local override.** A maintainer running `./gradlew publish`
+locally can still supply credentials via the usual Gradle property lookup:
+CLI flags (`-PnexusUsername=... -PnexusPassword=...`),
+`~/.gradle/gradle.properties`, or the same `ORG_GRADLE_PROJECT_*` env vars.
+Missing credentials only break `publish`; local builds,
+`publishToMavenLocal`, and SNAPSHOT dev loops all work without them.
+
+### Release commands
+
+**From GitHub Actions (normal path).** One workflow (`ci.yml`), two jobs
+(`build` → `publish`); `publish` runs only if `build` succeeds, so a failed
+test suite means no Nexus upload and no GitHub Release:
+
+| Trigger                                                       | Effect                                                                                                                            |
+|---------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
+| Pull request                                                  | `build` only — PRs never publish (reviewed via build status).                                                                     |
+| Push to any branch                                            | `build` + SNAPSHOT publish to Nexus `maven-snapshots`.                                                                            |
+| *Actions → CI → Run workflow* (default — `release` unchecked) | `build` + SNAPSHOT publish (same as a push, useful to re-publish a specific branch on demand).                                    |
+| *Actions → CI → Run workflow* with `release: true`            | `build` + `-Prelease publish githubRelease` — Nexus `maven-releases` + a GitHub Release `v<version>` with every module's `*.jar`. |
+
+**Locally (ad-hoc / debugging only).**
+
+```sh
+# SNAPSHOT publish to Nexus (from any non-master branch → tagged with branch).
+./gradlew publish
+
+# Release publish to Nexus `maven-releases`.
+./gradlew -Prelease publish
+
+# Full release: Nexus + GitHub Release + mavenLocal.
+./gradlew -Prelease publish publishToMavenLocal githubRelease
+```
+
+The `githubRelease` task requires `-Prelease` (SNAPSHOTs never create a
+GitHub Release — per workspace policy they live only in Nexus), needs the
+`gh` CLI on `PATH` authenticated with `gh auth login` (or `GH_TOKEN` set,
+as the Actions workflow does), and runs `gh release create v<version>`
+attaching every module's `build/libs/*.jar`. Tag handling is delegated to
+`gh` — the tag is created on the current `HEAD` if missing, so verify you
+are on the right commit before invoking.
 
 ## Running tests across the workspace
 

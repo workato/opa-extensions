@@ -7,9 +7,83 @@
 // `build/bom-repo/` in Maven-repo layout, and modules import it via
 // `platform('com.workato.agent:workato-agent-bom:0.1.0')`.
 
+// ---------------------------------------------------------------------------
+// Artifact version resolution.
+//
+//   baseVersion is declared in gradle.properties (`baseVersion=0.1.0`). The
+//   effective publish version is composed here from the base + the active
+//   branch + the `-Prelease` flag:
+//
+//     -Prelease                       → <baseVersion>                     (goes to Nexus `maven-releases`)
+//     on master / main                → <baseVersion>-SNAPSHOT            (goes to Nexus `maven-snapshots`)
+//     on any other branch             → <baseVersion>-<branch>-SNAPSHOT   (goes to Nexus `maven-snapshots`)
+//
+// Branch source preference:
+//   1. CI env vars — GITHUB_REF_NAME, CI_COMMIT_REF_NAME, BUILD_SOURCEBRANCHNAME.
+//      CI usually detaches HEAD, so `git rev-parse --abbrev-ref HEAD` returns
+//      "HEAD" and is useless there.
+//   2. `git rev-parse --abbrev-ref HEAD` run in rootDir — the local-dev path.
+//   3. empty — falls back to <baseVersion>-SNAPSHOT (the "unknown branch"
+//      answer; still useful, never fails the build).
+//
+// Branch sanitisation: anything outside [A-Za-z0-9._-] is replaced with `-`
+// and consecutive dashes collapsed, because Maven version strings may not
+// contain `/`, spaces, etc. The sanitised string goes into the version, so
+// the branch is directly recoverable from any -SNAPSHOT identifier.
+// ---------------------------------------------------------------------------
+def baseVersion = providers.gradleProperty('baseVersion').getOrElse('0.1.0')
+def isRelease = project.hasProperty('release')
+
+def resolveBranchName = {
+    def envBranch = System.getenv('GITHUB_REF_NAME') ?:
+            System.getenv('CI_COMMIT_REF_NAME') ?:
+                    System.getenv('BUILD_SOURCEBRANCHNAME')
+    if (envBranch?.trim()) {
+        return envBranch.trim()
+    }
+    try {
+        def proc = new ProcessBuilder('git', 'rev-parse', '--abbrev-ref', 'HEAD')
+                .directory(rootProject.rootDir)
+                .redirectErrorStream(true)
+                .start()
+        if (!proc.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+            proc.destroyForcibly()
+            return null
+        }
+        def out = proc.inputStream.text.trim()
+        return (proc.exitValue() == 0 && out && out != 'HEAD') ? out : null
+    } catch (Exception ignored) {
+        return null
+    }
+}
+
+def sanitizeBranch = { String branch ->
+    branch.replaceAll(/[^A-Za-z0-9._-]/, '-').replaceAll(/-+/, '-').replaceAll(/^-|-$/, '')
+}
+
+def computedVersion = {
+    if (isRelease) {
+        return baseVersion
+    }
+    def branch = resolveBranchName()
+    if (!branch || branch in ['master', 'main']) {
+        return "${baseVersion}-SNAPSHOT"
+    }
+    return "${baseVersion}-${sanitizeBranch(branch)}-SNAPSHOT"
+}()
+
+// Expose on the root project so the githubRelease task (below) and any
+// subproject can read `rootProject.ext.isRelease` / `.baseVersion` without
+// recomputing.
+ext {
+    workspaceBaseVersion = baseVersion
+    workspaceIsRelease = isRelease
+    workspaceBranch = resolveBranchName()
+}
+
 allprojects {
     group = 'com.workato.agent'
-    version = '0.1.0'
+    version = computedVersion
 
     repositories {
         // Local Maven-layout repo that serves the workato-agent-bom. Populated by
@@ -23,6 +97,7 @@ allprojects {
 
 subprojects {
     apply plugin: 'java'
+    apply plugin: 'maven-publish'
 
     java {
         sourceCompatibility = 21
@@ -78,6 +153,104 @@ subprojects {
         }
         doLast {
             configurations.findAll { it.canBeResolved }.each { it.resolve() }
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Publishing — Workato corporate Nexus.
+    //
+    // Repository URL is picked by version suffix (same convention as data-pipeline-common):
+    //   *-SNAPSHOT          → …/repository/maven-snapshots
+    //   anything else        → …/repository/maven-releases
+    //
+    // Per-module publications (what goes *into* each publication — jar + sources + javadoc for
+    // libraries, shaded jar for the demo) are declared in each module's own build.gradle. The
+    // only workspace-wide concerns here are (a) where to publish and (b) credentials.
+    //
+    // Credentials: `nexusUsername` / `nexusPassword` — read from gradle properties (CLI flag,
+    // ~/.gradle/gradle.properties, or ORG_GRADLE_PROJECT_* env var — the standard Gradle
+    // lookup order). Both `.orNull` so the build does not fail just because a developer who
+    // only runs `./gradlew build` locally has no credentials.
+    // ---------------------------------------------------------------------------------------
+    publishing {
+        repositories {
+            maven {
+                name = 'WorkatoNexus'
+                url = computedVersion.endsWith('-SNAPSHOT')
+                        ? uri('https://nexus.infra.wktodev.net/repository/maven-snapshots')
+                        : uri('https://nexus.infra.wktodev.net/repository/maven-releases')
+                credentials {
+                    username = providers.gradleProperty('nexusUsername').orNull
+                    password = providers.gradleProperty('nexusPassword').orNull
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// githubRelease — attach the built jars to a GitHub Release.
+//
+// Runs `gh release create v<version> <artifact>...` for the current version:
+//   * Requires `-Prelease` (SNAPSHOT builds never create a GitHub Release —
+//     per workspace policy, SNAPSHOTs live only in Nexus).
+//   * Requires `gh` CLI on PATH and an authenticated session (`gh auth status`).
+//   * Depends on every subproject's `assemble` so the jars exist when the
+//     task runs, and on `publish` is left to the invoker — recommended call:
+//
+//       ./gradlew -Prelease publish githubRelease
+//
+//     First phase uploads to Nexus `maven-releases`; second phase creates the
+//     GitHub Release and attaches the same jars.
+//
+// Tag handling: `gh release create` creates the tag on the current commit if
+// it does not exist. We intentionally do NOT push a tag from Gradle — the
+// developer should confirm they are on the right commit before running.
+// ---------------------------------------------------------------------------
+tasks.register('githubRelease') {
+    group = 'publishing'
+    description = 'Creates a GitHub Release v<version> and attaches every module\'s built jars. ' +
+            'Requires -Prelease and `gh` CLI authenticated.'
+
+    dependsOn subprojects.collect { it.tasks.named('assemble') }
+
+    doFirst {
+        if (!isRelease) {
+            throw new GradleException(
+                    "githubRelease requires -Prelease (current version=${computedVersion}). " +
+                            'SNAPSHOT builds publish to Nexus only.')
+        }
+        def gh = ['sh', '-c', 'command -v gh'].execute()
+        gh.waitFor()
+        if (gh.exitValue() != 0) {
+            throw new GradleException(
+                    'githubRelease needs the GitHub CLI (`gh`). Install from https://cli.github.com/ ' +
+                            'and run `gh auth login`.')
+        }
+    }
+
+    doLast {
+        def artifacts = subprojects.collectMany { sp ->
+            def libs = sp.file('build/libs')
+            libs.isDirectory() ? libs.listFiles().findAll { it.name.endsWith('.jar') } : []
+        }
+        if (artifacts.isEmpty()) {
+            throw new GradleException('No build/libs/*.jar artifacts found — run `./gradlew assemble` first.')
+        }
+
+        def tag = "v${computedVersion}"
+        def title = "Workato Agent Extensions ${computedVersion}"
+        def notes = "Automated release built from ${rootProject.ext.workspaceBranch ?: 'detached HEAD'}."
+
+        def cmd = ['gh', 'release', 'create', tag,
+                   '--title', title,
+                   '--notes', notes]
+        cmd.addAll(artifacts*.absolutePath)
+
+        logger.lifecycle("Creating GitHub Release ${tag} with ${artifacts.size()} artifact(s)…")
+        def proc = new ProcessBuilder(cmd).inheritIO().directory(rootProject.rootDir).start()
+        if (proc.waitFor() != 0) {
+            throw new GradleException("`gh release create` exited with status ${proc.exitValue()}.")
         }
     }
 }

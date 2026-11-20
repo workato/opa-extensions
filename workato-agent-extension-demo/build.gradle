@@ -207,3 +207,32 @@ task testRubyConnectors {
 // so both failures are visible in one build.
 test.finalizedBy testRubyConnectors
 check.dependsOn testRubyConnectors
+
+// ---------------------------------------------------------------------------
+// Publication — the reference extension bundle.
+//
+// The main jar of this module is already the shaded fat jar (see the `jar`
+// configuration above). Publishing `components.java` would include every
+// runtime dependency as a POM dependency, which is wrong for a fat jar — its
+// whole point is that nothing on the consumer side needs to resolve. So we
+// publish just the single jar artifact, no POM-level dependencies.
+//
+// This module is typically dropped into an agent `lib_ext/` directory rather
+// than pulled as a Maven dependency, but publishing the fat jar makes it
+// downloadable from Nexus for ops / CI pipelines that want a canonical URL
+// for every release.
+// ---------------------------------------------------------------------------
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            artifact tasks.named('jar')
+
+            pom {
+                name = 'Workato Agent Extensions Demo'
+                description = 'Reference bundle of sample extensions (security, ntlm, timer) packaged as a single shaded jar.'
+                url = 'https://github.com/workato/opa-extensions'
+                packaging = 'jar'
+            }
+        }
+    }
+}

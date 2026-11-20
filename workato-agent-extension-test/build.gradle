@@ -78,3 +78,24 @@ dependencies {
 test {
     useJUnitPlatform()
 }
+
+// ---------------------------------------------------------------------------
+// Publication — the test harness library.
+//
+// Same shape as the -api module: main jar + sources + javadoc, wired from the
+// `java` software component. Nexus repository and credentials come from the
+// workspace-wide publishing block in root build.gradle.
+// ---------------------------------------------------------------------------
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+
+            pom {
+                name = 'Workato Agent Extensions Test Harness'
+                description = 'MockMvc-based test harness for Workato on-prem agent (OPA) extensions.'
+                url = 'https://github.com/workato/opa-extensions'
+            }
+        }
+    }
+}
