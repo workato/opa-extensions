@@ -9,11 +9,11 @@ touching.
 OPA (On-Premise Agent) extension workspace. Three Gradle modules, all compiled
 from source and built together:
 
-| Module                              | Purpose                                                                                                                                                                                                                                                           | Per-module guidance                                                                                                                                                                     |
-|-------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **`workato-agent-extension-api/`**  | Public Extension API that customer extensions compile against. Published to Nexus as a regular library (jar + sources + javadoc); the agent (OPA) consumes it from there and provides the interfaces at runtime.                                                  | [`workato-agent-extension-api/CLAUDE.md`](workato-agent-extension-api/CLAUDE.md) + customer-facing [`workato-agent-extension-api/README.md`](workato-agent-extension-api/README.md)     |
-| **`workato-agent-extension-test/`** | Test-harness library. Depends on `-api`. Customers put it on their test classpath to drive their extension through a Spring `MockMvc` runtime without launching the real agent. Published to Nexus as a regular library.                                          | [`workato-agent-extension-test/CLAUDE.md`](workato-agent-extension-test/CLAUDE.md) + customer-facing [`workato-agent-extension-test/README.md`](workato-agent-extension-test/README.md) |
-| **`workato-agent-extension-demo/`** | Sample extensions (`security`, `ntlm`, `timer`) plus their JUnit tests and Workato custom connectors (Ruby). Published to Nexus as a shaded fat jar — the primary role is end-to-end exercise of the two artifacts above and as a reference customers clone from. | [`workato-agent-extension-demo/CLAUDE.md`](workato-agent-extension-demo/CLAUDE.md) + customer-facing [`workato-agent-extension-demo/README.md`](workato-agent-extension-demo/README.md) |
+| Module                              | Purpose                                                                                                                                                                                                                                                                                                                                             | Per-module guidance                                                                                                                                                                     |
+|-------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **`workato-agent-extension-api/`**  | Public Extension API that customer extensions compile against. Published to Nexus as a regular library (jar + sources + javadoc); the agent (OPA) consumes it from there and provides the interfaces at runtime.                                                                                                                                    | [`workato-agent-extension-api/CLAUDE.md`](workato-agent-extension-api/CLAUDE.md) + customer-facing [`workato-agent-extension-api/README.md`](workato-agent-extension-api/README.md)     |
+| **`workato-agent-extension-test/`** | Test-harness library. Depends on `-api`. Customers put it on their test classpath to drive their extension through a Spring `MockMvc` runtime without launching the real agent. Published to Nexus as a regular library.                                                                                                                            | [`workato-agent-extension-test/CLAUDE.md`](workato-agent-extension-test/CLAUDE.md) + customer-facing [`workato-agent-extension-test/README.md`](workato-agent-extension-test/README.md) |
+| **`workato-agent-extension-demo/`** | Sample extensions (`security`, `ntlm`, `timer`) plus their JUnit tests and Workato custom connectors (Ruby). Published to Nexus with three classifiers: shaded fat jar, `-sources` (Java + Ruby connectors under `ruby/`), and `-javadoc`. The primary role is end-to-end exercise of the two artifacts above and a reference customers clone from. | [`workato-agent-extension-demo/CLAUDE.md`](workato-agent-extension-demo/CLAUDE.md) + customer-facing [`workato-agent-extension-demo/README.md`](workato-agent-extension-demo/README.md) |
 
 Both `-api` and `-test` were previously developed inside the OPA repo
 (`modules/extension-api`, `modules/extension-test`). They were moved here so
@@ -138,37 +138,51 @@ Mirrors OPA's `modules/version-catalog` pins:
 
 ### Version resolution
 
-The artifact version is computed at configuration time in root `build.gradle`
-from three inputs:
+The base version lives in `gradle.properties` (`version=0.1.0`) and is
+consumed as `rootProject.version` by Gradle directly. The `version.suffix`
+property is the lever that flips the build between release and SNAPSHOT —
+root `build.gradle` reads it (CLI flag, `~/.gradle/gradle.properties`, or
+`ORG_GRADLE_PROJECT_version.suffix` env var, in Gradle's standard precedence)
+and appends it to the base version:
 
-| Input          | Source                                                                                                                                       | Example          |
-|----------------|----------------------------------------------------------------------------------------------------------------------------------------------|------------------|
-| `baseVersion`  | `gradle.properties` (`baseVersion=0.1.0`). Override with `-PbaseVersion=...`.                                                                | `0.1.0`          |
-| `release` flag | `-Prelease` on the Gradle command line.                                                                                                      | present / absent |
-| Current branch | Env vars first (`GITHUB_REF_NAME`, `CI_COMMIT_REF_NAME`, `BUILD_SOURCEBRANCHNAME`), else `git rev-parse --abbrev-ref HEAD` run in `rootDir`. | `release-0.1.0`  |
+| How `version.suffix` is supplied      | Effective version          | Target repository (Nexus) |
+|---------------------------------------|----------------------------|---------------------------|
+| `-Pversion.suffix=SNAPSHOT`           | `0.1.0-SNAPSHOT`           | `maven-snapshots`         |
+| `-Pversion.suffix=feature-x-SNAPSHOT` | `0.1.0-feature-x-SNAPSHOT` | `maven-snapshots`         |
+| `-Pversion.suffix=` (explicit empty)  | `0.1.0`                    | `maven-releases`          |
+| **Not passed** — local auto-detect    | see below                  | depends on branch         |
 
-The three combine as:
+**Local auto-detect** runs when `version.suffix` is not passed at all
+(property absent). It executes `git rev-parse --abbrev-ref HEAD` in the
+workspace root and picks:
 
-| Flag / branch                 | Effective version                            | Target repository (Nexus) |
-|-------------------------------|----------------------------------------------|---------------------------|
-| `-Prelease`                   | `${baseVersion}`                             | `maven-releases`          |
-| no flag, on `master` / `main` | `${baseVersion}-SNAPSHOT`                    | `maven-snapshots`         |
-| no flag, any other branch     | `${baseVersion}-${sanitizedBranch}-SNAPSHOT` | `maven-snapshots`         |
-| no flag, branch undetectable  | `${baseVersion}-SNAPSHOT` (fallback)         | `maven-snapshots`         |
+| git result                            | Resolved suffix               | Effective version          |
+|---------------------------------------|-------------------------------|----------------------------|
+| `master` / `main`                     | `SNAPSHOT`                    | `0.1.0-SNAPSHOT`           |
+| any other branch (e.g. `feature/x`)   | `<sanitized-branch>-SNAPSHOT` | `0.1.0-feature-x-SNAPSHOT` |
+| detached `HEAD`, git failure, timeout | `SNAPSHOT` (safe default)     | `0.1.0-SNAPSHOT`           |
 
-`sanitizedBranch` replaces anything outside `[A-Za-z0-9._-]` with `-` and
+Sanitisation replaces anything outside `[A-Za-z0-9._-]` with `-` and
 collapses consecutive dashes — Maven versions cannot contain `/` or spaces.
 The sanitised branch is directly recoverable from the published version
 string, so any SNAPSHOT in Nexus can be traced back to the branch it came
 from.
 
+**Who passes what.** CI always passes `-Pversion.suffix=<value>` explicitly
+(computed in `ci.yml` from `GITHUB_REF_NAME` + the `release` dispatch input),
+so the auto-detect path only fires on developer laptops. The auto-detect
+gives `./gradlew publishToMavenLocal` branch-aware SNAPSHOT behaviour out of
+the box, without any flags. The safe default on detached HEAD / git failure
+is `SNAPSHOT` (never `0.1.0` — so a glitchy local environment can never
+silently release).
+
 ### Publication layout
 
-| Module                         | Publication content                                   | POM dependencies                                                      |
-|--------------------------------|-------------------------------------------------------|-----------------------------------------------------------------------|
-| `workato-agent-extension-api`  | main jar + sources + javadoc (from `components.java`) | `platform(workato-agent-bom)` + Jackson `compileOnly`                 |
-| `workato-agent-extension-test` | main jar + sources + javadoc (from `components.java`) | `platform(workato-agent-bom)` + api-module GAV + Spring/Jackson/JUnit |
-| `workato-agent-extension-demo` | shaded fat jar only (`tasks.named('jar')`)            | none — the fat jar has everything bundled                             |
+| Module                         | Publication content                                                                                                                                           | POM dependencies                                                      |
+|--------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------|
+| `workato-agent-extension-api`  | main jar + `-sources` + `-javadoc` (from `components.java`); README.md is bundled inside both the main jar and the javadoc jar                                | `platform(workato-agent-bom)` + Jackson `compileOnly`                 |
+| `workato-agent-extension-test` | main jar + `-sources` + `-javadoc` (from `components.java`); README.md is bundled inside both the main jar and the javadoc jar                                | `platform(workato-agent-bom)` + api-module GAV + Spring/Jackson/JUnit |
+| `workato-agent-extension-demo` | shaded fat jar + `-sources` (Java + Ruby connectors under `ruby/` + per-extension READMEs) + `-javadoc` (with top-level README); fat jar bundles runtime deps | none — the fat jar has everything bundled                             |
 
 All three publications land in the Workato Nexus
 (`nexus.infra.wktodev.net/repository/maven-releases` or `/maven-snapshots`)
@@ -205,33 +219,37 @@ Missing credentials only break `publish`; local builds,
 (`build` → `publish`); `publish` runs only if `build` succeeds, so a failed
 test suite means no Nexus upload and no GitHub Release:
 
-| Trigger                                                       | Effect                                                                                                                            |
-|---------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
-| Pull request                                                  | `build` only — PRs never publish (reviewed via build status).                                                                     |
-| Push to any branch                                            | `build` + SNAPSHOT publish to Nexus `maven-snapshots`.                                                                            |
-| *Actions → CI → Run workflow* (default — `release` unchecked) | `build` + SNAPSHOT publish (same as a push, useful to re-publish a specific branch on demand).                                    |
-| *Actions → CI → Run workflow* with `release: true`            | `build` + `-Prelease publish githubRelease` — Nexus `maven-releases` + a GitHub Release `v<version>` with every module's `*.jar`. |
+| Trigger                                                       | Effect                                                                                                                                                                                  |
+|---------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Pull request                                                  | `build` only — PRs never publish (reviewed via build status).                                                                                                                           |
+| Push to any branch                                            | `build` + SNAPSHOT publish — CI step `Compute version suffix` derives `SNAPSHOT` (master/main) or `<branch>-SNAPSHOT` from `GITHUB_REF_NAME` and passes `-Pversion.suffix=…` to Gradle. |
+| *Actions → CI → Run workflow* (default — `release` unchecked) | Same as a push (useful to re-publish a specific branch on demand).                                                                                                                      |
+| *Actions → CI → Run workflow* with `release: true`            | `build` + `publish githubRelease -Pversion.suffix=` — Nexus `maven-releases` + a GitHub Release `v<version>` with every module's `*.jar`.                                               |
 
 **Locally (ad-hoc / debugging only).**
 
 ```sh
-# SNAPSHOT publish to Nexus (from any non-master branch → tagged with branch).
+# SNAPSHOT publish to Nexus — auto-detects the current branch via git.
 ./gradlew publish
 
-# Release publish to Nexus `maven-releases`.
-./gradlew -Prelease publish
+# Pin the suffix explicitly (handy when the local git state is noisy).
+./gradlew publish -Pversion.suffix=my-feature-SNAPSHOT
+
+# Release publish to Nexus `maven-releases` — empty suffix is the release signal.
+./gradlew publish -Pversion.suffix=
 
 # Full release: Nexus + GitHub Release + mavenLocal.
-./gradlew -Prelease publish publishToMavenLocal githubRelease
+./gradlew publish publishToMavenLocal githubRelease -Pversion.suffix=
 ```
 
-The `githubRelease` task requires `-Prelease` (SNAPSHOTs never create a
-GitHub Release — per workspace policy they live only in Nexus), needs the
-`gh` CLI on `PATH` authenticated with `gh auth login` (or `GH_TOKEN` set,
-as the Actions workflow does), and runs `gh release create v<version>`
-attaching every module's `build/libs/*.jar`. Tag handling is delegated to
-`gh` — the tag is created on the current `HEAD` if missing, so verify you
-are on the right commit before invoking.
+The `githubRelease` task refuses to run when `version` ends in `-SNAPSHOT`
+(SNAPSHOTs never create a GitHub Release — per workspace policy they live
+only in Nexus). It needs the `gh` CLI on `PATH` authenticated with
+`gh auth login` (or `GH_TOKEN` set, as the Actions workflow does), and runs
+`gh release create v<version> --generate-notes` attaching every module's
+`build/libs/*.jar`. Tag handling is delegated to `gh` — the tag is created
+on the current `HEAD` if missing, so verify you are on the right commit
+before invoking.
 
 ## Running tests across the workspace
 

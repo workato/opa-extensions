@@ -10,37 +10,29 @@
 // ---------------------------------------------------------------------------
 // Artifact version resolution.
 //
-//   baseVersion is declared in gradle.properties (`baseVersion=0.1.0`). The
-//   effective publish version is composed here from the base + the active
-//   branch + the `-Prelease` flag:
+//   Base version lives in gradle.properties (`version=0.1.0`) and is
+//   consumed as rootProject.version by Gradle automatically.
 //
-//     -Prelease                       → <baseVersion>                     (goes to Nexus `maven-releases`)
-//     on master / main                → <baseVersion>-SNAPSHOT            (goes to Nexus `maven-snapshots`)
-//     on any other branch             → <baseVersion>-<branch>-SNAPSHOT   (goes to Nexus `maven-snapshots`)
+//   The `version.suffix` property is the lever that flips release ↔ SNAPSHOT.
+//   Precedence (highest wins):
 //
-// Branch source preference:
-//   1. CI env vars — GITHUB_REF_NAME, CI_COMMIT_REF_NAME, BUILD_SOURCEBRANCHNAME.
-//      CI usually detaches HEAD, so `git rev-parse --abbrev-ref HEAD` returns
-//      "HEAD" and is useless there.
-//   2. `git rev-parse --abbrev-ref HEAD` run in rootDir — the local-dev path.
-//   3. empty — falls back to <baseVersion>-SNAPSHOT (the "unknown branch"
-//      answer; still useful, never fails the build).
+//     1. -Pversion.suffix=XXX        → appended to the base version.
+//                                       XXX="SNAPSHOT"                  → 0.1.0-SNAPSHOT
+//                                       XXX="feature-foo-SNAPSHOT"      → 0.1.0-feature-foo-SNAPSHOT
+//                                       XXX=""  (property explicitly empty) → 0.1.0 (release)
+//     2. property NOT passed         → local git auto-detect
+//                                       master/main                      → "SNAPSHOT"
+//                                       any other branch                 → "<sanitized-branch>-SNAPSHOT"
+//                                       detached HEAD or git failure     → "SNAPSHOT" (safe default)
 //
-// Branch sanitisation: anything outside [A-Za-z0-9._-] is replaced with `-`
-// and consecutive dashes collapsed, because Maven version strings may not
-// contain `/`, spaces, etc. The sanitised string goes into the version, so
-// the branch is directly recoverable from any -SNAPSHOT identifier.
+//   `.isPresent()` distinguishes "explicitly empty" (release, from CLI) from
+//   "not passed at all" (trigger auto-detect). CI always passes the flag —
+//   the auto-detect branch only fires on developer laptops.
+//
+//   Nexus repo URL is picked by the final version's `-SNAPSHOT` suffix, so
+//   SNAPSHOTs → maven-snapshots, release → maven-releases. No other switch.
 // ---------------------------------------------------------------------------
-def baseVersion = providers.gradleProperty('baseVersion').getOrElse('0.1.0')
-def isRelease = project.hasProperty('release')
-
-def resolveBranchName = {
-    def envBranch = System.getenv('GITHUB_REF_NAME') ?:
-            System.getenv('CI_COMMIT_REF_NAME') ?:
-                    System.getenv('BUILD_SOURCEBRANCHNAME')
-    if (envBranch?.trim()) {
-        return envBranch.trim()
-    }
+def autoDetectVersionSuffix = {
     try {
         def proc = new ProcessBuilder('git', 'rev-parse', '--abbrev-ref', 'HEAD')
                 .directory(rootProject.rootDir)
@@ -48,42 +40,34 @@ def resolveBranchName = {
                 .start()
         if (!proc.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
             proc.destroyForcibly()
-            return null
+            return 'SNAPSHOT'
         }
-        def out = proc.inputStream.text.trim()
-        return (proc.exitValue() == 0 && out && out != 'HEAD') ? out : null
+        def branch = proc.inputStream.text.trim()
+        if (proc.exitValue() != 0 || !branch || branch == 'HEAD' || branch in ['master', 'main']) {
+            return 'SNAPSHOT'
+        }
+        // Maven versions may not contain `/`, spaces, etc. — replace anything
+        // outside [A-Za-z0-9._-] with `-`, collapse consecutive dashes, trim
+        // leading/trailing dashes. Branch name is directly recoverable.
+        def sanitized = branch.replaceAll(/[^A-Za-z0-9._-]/, '-')
+                .replaceAll(/-+/, '-')
+                .replaceAll(/^-|-$/, '')
+        return "${sanitized}-SNAPSHOT"
     } catch (Exception ignored) {
-        return null
+        return 'SNAPSHOT'
     }
 }
 
-def sanitizeBranch = { String branch ->
-    branch.replaceAll(/[^A-Za-z0-9._-]/, '-').replaceAll(/-+/, '-').replaceAll(/^-|-$/, '')
-}
-
-def computedVersion = {
-    if (isRelease) {
-        return baseVersion
-    }
-    def branch = resolveBranchName()
-    if (!branch || branch in ['master', 'main']) {
-        return "${baseVersion}-SNAPSHOT"
-    }
-    return "${baseVersion}-${sanitizeBranch(branch)}-SNAPSHOT"
-}()
-
-// Expose on the root project so the githubRelease task (below) and any
-// subproject can read `rootProject.ext.isRelease` / `.baseVersion` without
-// recomputing.
-ext {
-    workspaceBaseVersion = baseVersion
-    workspaceIsRelease = isRelease
-    workspaceBranch = resolveBranchName()
-}
+def versionSuffixProvider = providers.gradleProperty('version.suffix')
+def versionSuffix = versionSuffixProvider.isPresent()
+        ? versionSuffixProvider.get()
+        : autoDetectVersionSuffix()
 
 allprojects {
     group = 'com.workato.agent'
-    version = computedVersion
+    if (versionSuffix) {
+        version = "${version}-${versionSuffix}"
+    }
 
     repositories {
         // Local Maven-layout repo that serves the workato-agent-bom. Populated by
@@ -176,7 +160,7 @@ subprojects {
         repositories {
             maven {
                 name = 'WorkatoNexus'
-                url = computedVersion.endsWith('-SNAPSHOT')
+                url = version.toString().endsWith('-SNAPSHOT')
                         ? uri('https://nexus.infra.wktodev.net/repository/maven-snapshots')
                         : uri('https://nexus.infra.wktodev.net/repository/maven-releases')
                 credentials {
@@ -192,33 +176,37 @@ subprojects {
 // githubRelease — attach the built jars to a GitHub Release.
 //
 // Runs `gh release create v<version> <artifact>...` for the current version:
-//   * Requires `-Prelease` (SNAPSHOT builds never create a GitHub Release —
-//     per workspace policy, SNAPSHOTs live only in Nexus).
-//   * Requires `gh` CLI on PATH and an authenticated session (`gh auth status`).
+//   * Only runs for release versions (version does NOT end in -SNAPSHOT) —
+//     SNAPSHOT builds never create a GitHub Release, per workspace policy.
+//     A release is produced by passing `-Pversion.suffix=` (empty) or any
+//     non-SNAPSHOT suffix.
+//   * Requires `gh` CLI on PATH and an authenticated session (`gh auth status`
+//     locally, GH_TOKEN env in CI).
 //   * Depends on every subproject's `assemble` so the jars exist when the
-//     task runs, and on `publish` is left to the invoker — recommended call:
+//     task runs. Chain with `publish` to upload to Nexus too:
 //
-//       ./gradlew -Prelease publish githubRelease
+//       ./gradlew publish githubRelease -Pversion.suffix=
 //
 //     First phase uploads to Nexus `maven-releases`; second phase creates the
 //     GitHub Release and attaches the same jars.
 //
 // Tag handling: `gh release create` creates the tag on the current commit if
 // it does not exist. We intentionally do NOT push a tag from Gradle — the
-// developer should confirm they are on the right commit before running.
+// developer (or CI) should confirm they are on the right commit before
+// running.
 // ---------------------------------------------------------------------------
 tasks.register('githubRelease') {
     group = 'publishing'
     description = 'Creates a GitHub Release v<version> and attaches every module\'s built jars. ' +
-            'Requires -Prelease and `gh` CLI authenticated.'
+            'Requires a non-SNAPSHOT version and `gh` CLI authenticated.'
 
     dependsOn subprojects.collect { it.tasks.named('assemble') }
 
     doFirst {
-        if (!isRelease) {
+        if (version.toString().endsWith('-SNAPSHOT')) {
             throw new GradleException(
-                    "githubRelease requires -Prelease (current version=${computedVersion}). " +
-                            'SNAPSHOT builds publish to Nexus only.')
+                    "githubRelease requires a release version (current=${version}). " +
+                            'Pass -Pversion.suffix= for an explicit release build; SNAPSHOT builds publish to Nexus only.')
         }
         def gh = ['sh', '-c', 'command -v gh'].execute()
         gh.waitFor()
@@ -238,13 +226,15 @@ tasks.register('githubRelease') {
             throw new GradleException('No build/libs/*.jar artifacts found — run `./gradlew assemble` first.')
         }
 
-        def tag = "v${computedVersion}"
-        def title = "Workato Agent Extensions ${computedVersion}"
-        def notes = "Automated release built from ${rootProject.ext.workspaceBranch ?: 'detached HEAD'}."
+        def tag = "v${version}"
+        def title = "Workato Agent Extensions ${version}"
 
+        // --generate-notes asks GitHub to compose release notes from the
+        // commit range since the previous tag — richer than anything we would
+        // hand-craft here, and the mechanism the rest of the org already uses.
         def cmd = ['gh', 'release', 'create', tag,
                    '--title', title,
-                   '--notes', notes]
+                   '--generate-notes']
         cmd.addAll(artifacts*.absolutePath)
 
         logger.lifecycle("Creating GitHub Release ${tag} with ${artifacts.size()} artifact(s)…")

@@ -126,16 +126,42 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle', 'gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
 
+      # Compute the Gradle -Pversion.suffix value here, not in build.gradle —
+      # GITHUB_REF_NAME and the dispatch input are both already in shell scope.
+      #
+      #   release (workflow_dispatch + release=true)  → suffix=""        → version 0.1.0
+      #   push / dispatch, master / main               → suffix=SNAPSHOT  → version 0.1.0-SNAPSHOT
+      #   push / dispatch, any other branch            → suffix=<sanitized-branch>-SNAPSHOT
+      #
+      # Sanitisation matches the Groovy regex in root build.gradle's auto-detect
+      # fallback so a local `git` build and a CI build agree on the version
+      # string for the same branch.
+      - name: Compute version suffix
+        id: ver
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.release }}" == "true" ]]; then
+            echo "suffix=" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref_name }}" == "master" || "${{ github.ref_name }}" == "main" ]]; then
+            echo "suffix=SNAPSHOT" >> "$GITHUB_OUTPUT"
+          else
+            sanitized=$(echo "${{ github.ref_name }}" \
+              | sed 's/[^A-Za-z0-9._-]/-/g' \
+              | tr -s '-' \
+              | sed 's/^-//; s/-$//')
+            echo "suffix=${sanitized}-SNAPSHOT" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish SNAPSHOT
         # Push event, OR manual dispatch without the release flag.
         if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.release != true) }}
-        run: ./gradlew publish --no-daemon --stacktrace
+        run: ./gradlew publish "-Pversion.suffix=${{ steps.ver.outputs.suffix }}" --no-daemon --stacktrace
 
       - name: Publish release + GitHub Release
         # Only a manual dispatch with release: true triggers a release. There
         # is no automatic release path — every release is an explicit human
-        # action, deliberately.
+        # action, deliberately. `-Pversion.suffix=` (empty value) is the
+        # explicit "release" signal to the version resolver in build.gradle.
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.release == true }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./gradlew -Prelease publish githubRelease --no-daemon --stacktrace
+        run: ./gradlew publish githubRelease "-Pversion.suffix=${{ steps.ver.outputs.suffix }}" --no-daemon --stacktrace
