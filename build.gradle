@@ -63,11 +63,19 @@ def versionSuffix = versionSuffixProvider.isPresent()
         ? versionSuffixProvider.get()
         : autoDetectVersionSuffix()
 
+// Compute the final version on rootProject exactly once, then propagate it to
+// every subproject explicitly in the `allprojects { }` block below. This
+// avoids relying on Gradle's implicit propagation of root `gradle.properties`
+// to subproject.version — which works for our single root-level
+// gradle.properties today, but silently drifts the moment any subproject
+// grows its own gradle.properties.
+if (versionSuffix) {
+    version = "${version}-${versionSuffix}"
+}
+
 allprojects {
     group = 'com.workato.agent'
-    if (versionSuffix) {
-        version = "${version}-${versionSuffix}"
-    }
+    version = rootProject.version
 
     repositories {
         // Local Maven-layout repo that serves the workato-agent-bom. Populated by
