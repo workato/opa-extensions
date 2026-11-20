@@ -48,4 +48,36 @@ subprojects {
             showStandardStreams = false
         }
     }
+
+    // ---------------------------------------------------------------------------------------
+    // Dependency locking — pin the full transitive graph per subproject so the resolved
+    // versions are reproducible across builds and visible in review (closes
+    // boostsecurity-io-ai "CI/CD - Missing Lockfile" finding on every build.gradle).
+    //
+    // The BOM already pins direct versions; locking adds cryptographic pinning for the
+    // transitive closure Gradle walks on top of that. Regenerate the lockfiles after any
+    // BOM bump or dependency add/remove:
+    //
+    //   ./gradlew resolveAndLockAll --write-locks
+    //
+    // The `resolveAndLockAll` task below resolves every lockable configuration in one shot so
+    // one invocation refreshes all lockfiles under src/… and build.gradle for every module.
+    // ---------------------------------------------------------------------------------------
+    dependencyLocking {
+        lockAllConfigurations()
+    }
+
+    tasks.register('resolveAndLockAll') {
+        group = 'help'
+        description = 'Resolves every lockable configuration so `--write-locks` rewrites gradle.lockfile end-to-end.'
+        notCompatibleWithConfigurationCache(
+                'Resolves configurations at execution time to force lock file refresh — required for --write-locks.')
+        doFirst {
+            assert gradle.startParameter.writeDependencyLocks:
+                    'Run with --write-locks, e.g. `./gradlew resolveAndLockAll --write-locks`.'
+        }
+        doLast {
+            configurations.findAll { it.canBeResolved }.each { it.resolve() }
+        }
+    }
 }

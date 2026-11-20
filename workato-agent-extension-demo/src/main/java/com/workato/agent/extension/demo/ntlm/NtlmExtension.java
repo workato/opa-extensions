@@ -54,6 +54,34 @@ import java.util.Locale;
  *   <li>If you add a controller advice or exception handler, strip this header from any diagnostic
  *       payload before emitting it.</li>
  * </ul>
+ *
+ * <h2>SSRF surface — mitigated by {@code ntlm.allowed-hosts}, not eliminated</h2>
+ * The {@code X-Workato-NTLM-url} header is turned into an outbound {@code GET} by
+ * {@link #request(String, String, jakarta.servlet.http.HttpServletResponse)}; that is a textbook
+ * SSRF sink and CodeQL's {@code java/ssrf} query flags it. The design intentionally keeps the sink
+ * (the Workato recipe must be able to target arbitrary intranet URLs — that is the whole point of
+ * the extension) and layers mitigations in front of it:
+ * <ul>
+ *   <li>{@link #parseHttpUri(String)} rejects non-{@code http/https} schemes, hostless URLs, and
+ *       URLs carrying {@code userinfo} (which would race with the NTLM credentials).</li>
+ *   <li>{@link #hostAllowed(String)} enforces the operator-supplied
+ *       {@code ntlm.allowed-hosts} allow-list (exact host or {@code *.suffix} wildcard,
+ *       IDN-normalised). Empty value defaults to "allow all" for the demo back-compat path; see
+ *       below.</li>
+ *   <li>Response body is only forwarded on HTTP 200; any other status is dropped and the status
+ *       code is forwarded without body, which limits the oracle a probing attacker gets.</li>
+ * </ul>
+ * <p>
+ * <b>Operator responsibility in production:</b> always configure an explicit non-empty
+ * {@code ntlm.allowed-hosts} list. The empty-value "allow all" default exists so that the demo
+ * boots without ceremony on a developer laptop; shipping it to any environment reachable from
+ * untrusted recipes <em>is</em> a server-side request forgery vulnerability, and that is on the
+ * operator, not on this file. The companion {@code workato-agent-extension-demo/CLAUDE.md}
+ * section on the NTLM demo spells out the same requirement.
+ * <p>
+ * <b>CodeQL note:</b> the open-by-default allow-list is why
+ * {@code https://github.com/workato/opa-extensions/security/code-scanning/5} fires. The alert is
+ * expected to be dismissed as "won't fix — by design" with a link back to this Javadoc.
  */
 @RestController
 public class NtlmExtension implements DisposableBean {
@@ -211,6 +239,11 @@ public class NtlmExtension implements DisposableBean {
             HttpClientContext context = HttpClientContext.create();
             context.setCredentialsProvider(credentialsProvider);
 
+            // SSRF sink — user-supplied URL becomes an outbound HTTP GET. By the time execution
+            // reaches this line, `target` has passed `parseHttpUri` (http/https only, host required,
+            // no userinfo) and `hostAllowed` (operator-supplied allow-list match) above. See the
+            // "SSRF surface" section of the class Javadoc for the full mitigation layering and the
+            // operator responsibility to configure `ntlm.allowed-hosts` in production.
             HttpGet httpGet = new HttpGet(target);
 
             try (CloseableHttpResponse response = client().execute(httpGet, context)) {
