@@ -1,0 +1,3 @@
+extensions:
+  tx:
+    controller: com.workato.agent.extension.test.testext.TranslatingController

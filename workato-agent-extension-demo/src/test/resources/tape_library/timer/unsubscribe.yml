@@ -1,0 +1,20 @@
+---
+http_interactions:
+  - request:
+      method: post
+      uri: http://localhost/ext/timer/webhook/unsubscribe
+      body:
+        encoding: UTF-8
+        string: ''
+      headers: { }
+    response:
+      status:
+        code: 204
+        message: No Content
+      headers: { }
+      body:
+        encoding: UTF-8
+        string: ''
+      http_version: '1.1'
+    recorded_at: Thu, 16 Oct 2026 10:00:00 GMT
+recorded_with: VCR 6.3.1

@@ -1,0 +1,3 @@
+extensions:
+  upper:
+    controller: com.workato.agent.extension.test.testext.UpperCasingController

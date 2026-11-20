@@ -1,0 +1,4 @@
+extensions:
+  security:
+    controller: com.workato.agent.extension.demo.security.SecurityExtension
+    signing-secret: test-secret

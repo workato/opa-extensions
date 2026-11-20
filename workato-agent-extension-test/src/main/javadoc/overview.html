@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<body>
+Test-time harness and fakes for Workato on-premise agent extensions.
+<p>
+    Two complementary tools: <code>AgentExtensionHarness</code> (in-memory MockMvc harness, no agent installed) and
+    <code>DeployedAgentLauncher</code> (in-process real-agent launcher against a deployed distribution). The fake
+    webhook
+    implementation (<code>FakeAgentWebhookApiV1</code>) scripts responses and captures the call log so unit tests can
+    assert against outbound deliveries without opening a socket.
+</p>
+<p>
+    The customer-facing usage guide — quick start, YAML fixtures, stub/assert patterns, DeployedAgentLauncher setup —
+    lives alongside this javadoc as <a href="README.md"><code>README.md</code></a>. Open it from the same directory
+    (your IDE's "Javadoc" tab unpacks the jar, so the link resolves to the file next to <code>index.html</code>).
+</p>
+</body>
+</html>

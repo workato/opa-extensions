@@ -1,0 +1,3 @@
+extensions:
+  defaults:
+    controller: com.workato.agent.extension.test.testext.DefaultingController

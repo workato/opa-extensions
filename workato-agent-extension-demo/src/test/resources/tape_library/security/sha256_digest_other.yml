@@ -1,0 +1,22 @@
+---
+http_interactions:
+  - request:
+      method: post
+      uri: http://localhost/ext/security/computeDigest
+      body:
+        encoding: UTF-8
+        string: ''
+      headers: { }
+    response:
+      status:
+        code: 200
+        message: OK
+      headers:
+        Content-Type:
+          - application/json
+      body:
+        encoding: UTF-8
+        string: '{"signature":"1111111111111111111111111111111111111111111111111111111111111111"}'
+      http_version: '1.1'
+    recorded_at: Thu, 15 Oct 2026 10:00:00 GMT
+recorded_with: VCR 6.3.1
