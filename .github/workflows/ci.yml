@@ -48,7 +48,7 @@ permissions:
 jobs:
   build:
     name: Build (JDK 21 + Ruby 3.4)
-    runs-on: ubuntu-latest
+    runs-on: k8s-ci-prod-medium
 
     steps:
       - name: Checkout
@@ -91,7 +91,7 @@ jobs:
 
   publish:
     name: Publish to Nexus
-    runs-on: ubuntu-latest
+    runs-on: k8s-ci-prod-medium
 
     # Gate 1 — the build job must succeed. `needs:` implicitly requires it.
     needs: build
