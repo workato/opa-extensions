@@ -304,20 +304,20 @@ public interface AgentWebhookV1 {
     // send ladder — pick the shortest overload that carries exactly what you need
     WebhookResponse send(String url, Object jsonBody);
 
-    WebhookResponse send(String url, Object jsonBody, Map<String, String> headers);
+    WebhookResponse send(String url, Object jsonBody, Map<String, List<String>> headers);
 
     WebhookResponse send(String url, Object jsonBody, RetryPolicy policy);
 
-    WebhookResponse send(String url, Object jsonBody, RetryPolicy policy, Map<String, String> headers);
+    WebhookResponse send(String url, Object jsonBody, RetryPolicy policy, Map<String, List<String>> headers);
 
     // wakeup ladder — empty POST, same four shapes
     WebhookResponse wakeup(String url);
 
-    WebhookResponse wakeup(String url, Map<String, String> headers);
+    WebhookResponse wakeup(String url, Map<String, List<String>> headers);
 
     WebhookResponse wakeup(String url, RetryPolicy policy);
 
-    WebhookResponse wakeup(String url, RetryPolicy policy, Map<String, String> headers);
+    WebhookResponse wakeup(String url, RetryPolicy policy, Map<String, List<String>> headers);
 
     RetryPolicy getDefaultRetryPolicy();
 
