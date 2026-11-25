@@ -421,6 +421,36 @@ addition is `contentHash()`:
 An empty connection map still has a well-defined hash — it is the SHA-256 of
 the empty canonical form, not `null` and not a sentinel.
 
+#### Payload shape
+
+The connection payload arrives as JSON. The agent flattens nested objects into
+dot-joined paths before `getConnectionProperties()` sees them — each leaf
+becomes a single flat map entry that `@Value("${path}")` can resolve directly:
+
+| Incoming JSON                       | Flat key in the map | Value          |
+|-------------------------------------|---------------------|----------------|
+| `{"token":"T"}`                     | `token`             | `"T"`          |
+| `{"auth":{"token":"T"}}`            | `auth.token`        | `"T"`          |
+| `{"db":{"creds":{"user":"u"}}}`     | `db.creds.user`     | `"u"`          |
+| `{"a.b.c":"L"}` *(literal dots)*    | `a.b.c`             | `"L"`          |
+
+Literal dots in a JSON property name are preserved verbatim, so
+`{"a.b":1}` and `{"a":{"b":1}}` collapse to the same flat key `a.b`. Lists and
+scalars are leaves — they land under the current path as-is (a `List<?>`
+survives as a `List<?>`). Intermediate parent keys are never added; only leaf
+values appear in the map.
+
+#### Absent and malformed payloads
+
+- **Absent.** When the current request carries no connection payload,
+  `getConnectionProperties()` returns an empty map (never `null`), and
+  `contentHash()` returns the SHA-256 of the empty canonical form.
+- **Malformed.** A payload that cannot be decoded (invalid base64, non-JSON
+  body) is rejected by the agent with HTTP `400 Bad Request` before the
+  extension handler runs — a malformed payload is a sender bug, and the agent
+  refuses to run the handler with a silently-empty map that would produce the
+  wrong result.
+
 ## Property injection with `@Value`
 
 `@Value("${key}")` resolves against two data sources: your extension's YAML
@@ -441,6 +471,17 @@ The plain-field case is deliberately profile-only: a plain field is bound
 once, before any request has arrived, and the connection payload logically
 belongs to the request. Declaring the field as `Supplier<T>` is the opt-in
 signal for "late binding, see both sources."
+
+> **Startup diagnostic for the with-default form.** When a plain field uses the
+> fallback form `@Value("${k:default}") String` and the key `k` is also absent
+> from the profile YAML, the agent logs a `WARN` at startup pointing at
+> `Supplier<T>` as the fix. The field itself still loads successfully with the
+> default value (Spring's established optional-config idiom is preserved), but
+> the warning catches the common mistake of declaring a connection-scoped key
+> as a plain field — it would otherwise stay stuck on the default forever. The
+> warning cites both plausible causes so the operator can decide which fix
+> applies: (1) typo in the key name, or (2) the key is a connection property
+> and needs `Supplier<T>` / a handler method parameter instead.
 
 ### `@Value` on a handler-method parameter
 
