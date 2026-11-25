@@ -5,12 +5,16 @@ package com.workato.agent.extension.test;
 
 import com.workato.agent.extension.api.AgentExtensionContextV1;
 import com.workato.agent.extension.api.AgentExtensionContextV1.AgentConfiguration;
+import com.workato.agent.extension.api.AgentExtensionContextV1.ConnectionProperties;
 import com.workato.agent.extension.api.AgentExtensionV1;
 import com.workato.agent.extension.api.AgentToolsV1;
 import com.workato.agent.extension.api.AgentWebhookV1;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.*;
 
 /**
@@ -32,18 +36,47 @@ final class FakeAgentExtension implements AgentExtensionV1 {
     private final AgentToolsV1 tools;
 
     FakeAgentExtension(String profileName, Map<String, Object> properties) {
-        this(profileName, properties, new FakeAgentWebhookV1());
+        this(profileName, properties, Map.of(), new FakeAgentWebhookV1());
     }
 
-    FakeAgentExtension(String profileName, Map<String, Object> properties, FakeAgentWebhookV1 webhook) {
-        this.context = new FakeContext(profileName, properties);
+    FakeAgentExtension(String profileName,
+                       Map<String, Object> properties,
+                       Map<String, Object> connectionProperties,
+                       FakeAgentWebhookV1 webhook) {
+        this.context = new FakeContext(profileName, properties, connectionProperties);
         this.webhook = webhook;
         this.tools = new FakeTools(JsonMapper.builder().build());
     }
 
-    private static AgentConfiguration unmodifiable(Map<String, Object> source) {
+    private static AgentConfiguration unmodifiableConfiguration(Map<String, Object> source) {
         Map<String, Object> copy = source == null ? Map.of() : new LinkedHashMap<>(source);
         return new UnmodifiableConfiguration(Collections.unmodifiableMap(copy));
+    }
+
+    private static ConnectionProperties unmodifiableConnection(Map<String, Object> source) {
+        Map<String, Object> copy = source == null ? Map.of() : new LinkedHashMap<>(source);
+        return new UnmodifiableConnectionProperties(Collections.unmodifiableMap(copy));
+    }
+
+    static String sha256Hex(Map<String, Object> entries) {
+        StringBuilder canonical = new StringBuilder();
+        List<String> sortedKeys = new ArrayList<>(entries.keySet());
+        Collections.sort(sortedKeys);
+        for (String key : sortedKeys) {
+            canonical.append(key).append('=').append(entries.get(key)).append('\n');
+        }
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] bytes = digest.digest(canonical.toString().getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(bytes.length * 2);
+            for (byte b : bytes) {
+                hex.append(Character.forDigit((b >> 4) & 0xF, 16));
+                hex.append(Character.forDigit(b & 0xF, 16));
+            }
+            return hex.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 not available on this JVM", e);
+        }
     }
 
     @Override
@@ -69,10 +102,11 @@ final class FakeAgentExtension implements AgentExtensionV1 {
     }
 
     private record FakeContext(String profileName,
-                               AgentConfiguration configuration) implements AgentExtensionContextV1 {
+                               AgentConfiguration configuration,
+                               ConnectionProperties connection) implements AgentExtensionContextV1 {
 
-        FakeContext(String profileName, Map<String, Object> properties) {
-            this(profileName, unmodifiable(properties));
+        FakeContext(String profileName, Map<String, Object> properties, Map<String, Object> connectionProperties) {
+            this(profileName, unmodifiableConfiguration(properties), unmodifiableConnection(connectionProperties));
         }
 
         @Override
@@ -83,6 +117,11 @@ final class FakeAgentExtension implements AgentExtensionV1 {
         @Override
         public AgentConfiguration getProfileConfiguration() {
             return configuration;
+        }
+
+        @Override
+        public ConnectionProperties getConnectionProperties() {
+            return connection;
         }
     }
 
@@ -97,6 +136,28 @@ final class FakeAgentExtension implements AgentExtensionV1 {
         @Override
         public Set<Map.Entry<String, Object>> entrySet() {
             return delegate.entrySet();
+        }
+    }
+
+    private static final class UnmodifiableConnectionProperties extends AbstractMap<String, Object>
+            implements ConnectionProperties {
+
+        private final Map<String, Object> delegate;
+        private final String contentHash;
+
+        UnmodifiableConnectionProperties(Map<String, Object> delegate) {
+            this.delegate = delegate;
+            this.contentHash = sha256Hex(delegate);
+        }
+
+        @Override
+        public Set<Map.Entry<String, Object>> entrySet() {
+            return delegate.entrySet();
+        }
+
+        @Override
+        public String contentHash() {
+            return contentHash;
         }
     }
 }

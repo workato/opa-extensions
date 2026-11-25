@@ -53,6 +53,33 @@ public interface AgentExtensionContextV1 {
     AgentConfiguration getProfileConfiguration();
 
     /**
+     * Current connection-scoped properties for this endpoint — the secrets and
+     * settings carried in by the connection that triggered the request, as
+     * distinct from the static profile configuration declared in
+     * {@code config.yml}. Typical content: OAuth tokens, per-tenant base URLs,
+     * credentials that must not live in a YAML file.
+     *
+     * <p>Like {@link #getProfileConfiguration()} the returned view is
+     * unmodifiable; unlike it, connection content is logically tied to the
+     * caller rather than to the endpoint, and a future revision may allow the
+     * agent to refresh it between requests. The {@link ConnectionProperties#contentHash()}
+     * accessor exposes a stable fingerprint callers can use as a cache key
+     * (e.g., keyed on {@code "client-" + profile + "-" + hash}) to invalidate
+     * precomputed state when the connection payload changes.
+     *
+     * <p>Every entry in the returned map is also resolvable via
+     * {@code @Value("${key}")} on the controller, in addition to the profile
+     * section. <b>Profile properties win on key collision:</b> if the same key
+     * appears in both {@link #getProfileConfiguration()} and
+     * {@link #getConnectionProperties()}, {@code @Value} resolves to the
+     * profile's value and the agent emits an {@code ERROR}-level log entry
+     * flagging the shadowed connection key. The connection map still reports
+     * the connection-supplied value verbatim (it is a passthrough of what the
+     * caller sent); only {@code @Value} resolution is overridden.
+     */
+    ConnectionProperties getConnectionProperties();
+
+    /**
      * Map-shaped view of an extension endpoint's YAML section — the configuration
      * belonging to the extension, exposed to its controller.
      *
@@ -70,5 +97,37 @@ public interface AgentExtensionContextV1 {
      * state is unaffected.
      */
     interface AgentConfiguration extends Map<String, Object> {
+    }
+
+    /**
+     * Map-shaped view of the connection-scoped properties attached to the current endpoint.
+     * Extends {@link Map} for the same reason {@link AgentConfiguration} does — the payload
+     * <em>is</em> a map, so customers consume it with the standard JDK API.
+     *
+     * <p>Like {@link AgentConfiguration}, the view is an unmodifiable snapshot: mutating ops
+     * throw {@link UnsupportedOperationException}. Unlike it, this view adds a single extra
+     * accessor, {@link #contentHash()}, intended as a cache key for state the extension
+     * derives from the current connection payload.
+     *
+     * <h2>Hash contract</h2>
+     * <ul>
+     *   <li><b>Algorithm:</b> SHA-256 over the canonical form of the map entries, lowercase
+     *       hex-encoded, 64 characters long.</li>
+     *   <li><b>Canonical form:</b> entries sorted lexicographically by key; each entry rendered
+     *       as {@code key=value\n} with values coerced through {@link String#valueOf(Object)}.
+     *       Keeps the hash independent of the underlying map's iteration order.</li>
+     *   <li><b>Stability:</b> identical contents produce identical hashes across JVM instances
+     *       and across restarts, so the value is safe to persist or share across processes.</li>
+     *   <li><b>Empty map:</b> hashes the empty canonical form — not a sentinel string, not null.</li>
+     * </ul>
+     */
+    interface ConnectionProperties extends Map<String, Object> {
+
+        /**
+         * Lowercase hex SHA-256 fingerprint of the map contents. Stable across JVM instances
+         * for identical content. See the class-level javadoc for the canonical form that
+         * feeds the hash function.
+         */
+        String contentHash();
     }
 }

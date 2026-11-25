@@ -127,13 +127,24 @@ public interface AgentExtensionContextV1 {
     String getProfileName();
 
     AgentConfiguration getProfileConfiguration();
+
+    ConnectionProperties getConnectionProperties();
 }
 ```
 
-| Method                      | What you get                                                                                                                                                                       |
-|-----------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `getProfileName()`          | The YAML key your extension is declared under (`my-extension` in the example above). Stable for the lifetime of the agent.                                                         |
-| `getProfileConfiguration()` | Your extension's YAML section as a map, including the `controller` / `controllerClass` key alongside your custom properties. Snapshot — does not change across agent YAML reloads. |
+| Method                      | What you get                                                                                                                                                                                                                                                                                                                    |
+|-----------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `getProfileName()`          | The YAML key your extension is declared under (`my-extension` in the example above). Stable for the lifetime of the agent.                                                                                                                                                                                                      |
+| `getProfileConfiguration()` | Your extension's YAML section as a map, including the `controller` / `controllerClass` key alongside your custom properties. Snapshot — does not change across agent YAML reloads.                                                                                                                                              |
+| `getConnectionProperties()` | Connection-scoped properties attached to the current endpoint (OAuth tokens, per-tenant URLs, credentials that must not live in a YAML file). Also map-shaped and unmodifiable; adds `contentHash()` — a stable SHA-256 fingerprint of the content, useful as a cache key when the extension derives state from the connection. |
+
+Every entry under `getConnectionProperties()` is also resolvable via
+`@Value("${key}")` on your controller, exactly like entries under
+`getProfileConfiguration()`. **Profile properties win on key collision:** if the
+same key appears in both, `@Value` resolves to the profile value and the agent
+emits an `ERROR`-level log entry flagging the shadowed connection key. The
+connection map still reports the connection-supplied value verbatim (it is a
+passthrough of what the caller sent); only `@Value` resolution is overridden.
 
 > **Each extension sees only its own profile.** There is no API for discovering
 > other extensions' configuration. (Note that this does not provide full
@@ -382,10 +393,41 @@ sections arrive as nested `Map` values; YAML lists arrive as `List` values.
 > `UnsupportedOperationException`, and the agent's internal state is unaffected.
 > Treat it as read-only.
 
+### `AgentExtensionContextV1.ConnectionProperties` — map view of the connection payload
+
+Also nested on `AgentExtensionContextV1`; obtained via
+`agent.getContext().getConnectionProperties()`.
+
+```java
+public interface AgentExtensionContextV1 {
+    // ...
+    interface ConnectionProperties extends Map<String, Object> {
+        String contentHash();
+    }
+}
+```
+
+Same `Map<String, Object>` surface as `AgentConfiguration`, same unmodifiable
+guarantees (`put` / `remove` / `clear` / `putAll` / `entrySet().iterator().remove()` /
+`Entry.setValue(...)` all throw `UnsupportedOperationException`). The one
+addition is `contentHash()`:
+
+- **Algorithm.** SHA-256 over a canonical form of the entries, lowercase hex,
+  64 characters long. The canonical form is `key=value\n` lines sorted
+  lexicographically by key, with values coerced through `String.valueOf(...)`.
+- **Stability.** Identical content produces identical hashes across JVM
+  instances and process restarts — safe to persist or share across processes.
+- **Typical use.** Cache key for state the extension derives from the current
+  connection payload (`"state-" + profile + "-" + hash`), so the cache
+  invalidates automatically when the connection payload changes.
+
+An empty connection map still has a well-defined hash — it is the SHA-256 of
+the empty canonical form, not `null` and not a sentinel.
+
 ## Property injection with `@Value`
 
-Any key under your extension's YAML section is injectable via Spring's
-`@Value("${key}")`:
+Any key under your extension's YAML section or the current connection payload
+is injectable via Spring's `@Value("${key}")`:
 
 ```yaml
 extensions:
@@ -397,16 +439,26 @@ extensions:
 
 ```java
 
-@Value("${api.endpoint}")
+@Value("${api.endpoint}")           // from the profile YAML
 private String endpoint;
 
-@Value("${api.timeout-ms:3000}")   // defaults supported
+@Value("${api.token}")              // from the connection payload
+private String apiToken;
+
+@Value("${api.timeout-ms:3000}")    // defaults supported
 private int timeoutMs;
 ```
 
 Dots in YAML keys are treated as literal characters, not nesting separators —
 the lookup is a direct map `get()`. If you have a nested YAML section and want
 to inject individual leaves, flatten the keys or inject the parent `Map`.
+
+**Profile properties win on collision with connection properties.** If the same
+key is present in both your YAML section and the current connection payload,
+`@Value` resolves to the profile value and the agent emits an `ERROR`-level log
+entry naming the shadowed connection key. The connection map still reports the
+connection value verbatim — only `@Value` resolution is overridden. Rename
+either side to resolve the clash.
 
 ## Migrating from the legacy API
 
@@ -474,17 +526,18 @@ before the legacy types are removed.
 ## Versioning
 
 The API is named `AgentExtensionV1` / `AgentExtensionContextV1` (with its nested
-`AgentConfiguration`) / `AgentWebhookV1` (with its nested `WebhookResponse`, `RetryPolicy`,
-`WebhookDeliveryException`, `WebhookResponseException`) / `AgentToolsV1`.
+`AgentConfiguration` and `ConnectionProperties`) / `AgentWebhookV1` (with its nested
+`WebhookResponse`, `RetryPolicy`, `WebhookDeliveryException`, `WebhookResponseException`) /
+`AgentToolsV1`.
 
 - `AgentExtensionV1`, `AgentExtensionContextV1`, and `AgentToolsV1` are **consumer-only** —
   customer code calls their methods but does not implement them (the
   implementation is supplied by the agent). Methods may be added to these
   interfaces without breaking customer compile or runtime, as long as the
   customer does not provide their own implementation.
-- `AgentConfiguration` extends `Map<String, Object>`; additional typed
-  accessors may be added here in future iterations, source- and binary-compatible
-  with existing calls.
+- `AgentConfiguration` and `ConnectionProperties` extend `Map<String, Object>`;
+  additional typed accessors may be added here in future iterations, source-
+  and binary-compatible with existing calls.
 - Incompatible changes will introduce a parallel `V2` family and keep `V1`
   running until a documented removal window.
 

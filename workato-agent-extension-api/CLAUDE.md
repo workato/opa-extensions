@@ -25,7 +25,7 @@ Public API that customer-developed agent extensions compile against.
 > - the **Versioning** section when introducing a `V2` or a removal window.
 >
 > A PR that touches `AgentExtensionV1`, `AgentExtensionContextV1` (including its nested
-> `AgentConfiguration`), `AgentWebhookV1` (including its nested
+> `AgentConfiguration` and `ConnectionProperties`), `AgentWebhookV1` (including its nested
 > `WebhookResponse` / `RetryPolicy` / `WebhookDeliveryException` /
 > `WebhookResponseException`), `AgentToolsV1`, or `package-info.java` without touching
 > README.md is almost certainly incomplete.
@@ -132,13 +132,15 @@ and `FakeAgentExtension` in `extension-test` — are kept in lockstep.
 
 Replaces the legacy `com.workato.agent.config.DefaultExtensionEndpoint` record
 (bean `"workatoEndpoint"`). Carries the endpoint's identity, its own YAML
-section, and a view of every other loaded extension.
+section, and the connection-scoped properties attached to the current request.
 
 ```java
 public interface AgentExtensionContextV1 {
     String getProfileName();                                // this endpoint's YAML key
 
     AgentConfiguration getProfileConfiguration();           // this endpoint's YAML section
+
+    ConnectionProperties getConnectionProperties();         // this endpoint's connection payload
 }
 ```
 
@@ -150,6 +152,13 @@ public interface AgentExtensionContextV1 {
   taken when the endpoint was registered — stable across YAML reloads of the agent.
   Returned instance is an **unmodifiable view** backed by a defensive copy;
   mutators throw `UnsupportedOperationException`.
+- `getConnectionProperties()` — the current connection payload (OAuth tokens,
+  per-tenant base URLs, credentials that must not live in a YAML file). Also
+  unmodifiable and defensive-copy-backed. Adds `contentHash()` — a stable
+  SHA-256 hex fingerprint of the content, suitable as a cache key when state is
+  derived from the current connection. Every entry is also resolvable via
+  `@Value("${key}")` on the controller, alongside the profile entries — see
+  the next sub-section for the collision rule.
 
 #### Deliberately omitted: `getAllConfigurations()`
 
@@ -193,6 +202,51 @@ by a defensive copy: any mutating operation throws
 Future typed accessors (`getString`, `getInt`, …) can be added to this
 interface without breaking source or binary compatibility — the `Map` contract
 on the type stays in place.
+
+### `AgentExtensionContextV1.ConnectionProperties` — map-shaped view of the connection payload
+
+Declared next to `AgentConfiguration`, same nesting rationale (single-import).
+
+```java
+public interface ConnectionProperties extends Map<String, Object> {
+    String contentHash();
+}
+```
+
+Semantically distinct from `AgentConfiguration` in two ways:
+
+1. **Data origin.** `AgentConfiguration` is the YAML section — static,
+   administrator-authored, typically public-safe. `ConnectionProperties` carries
+   the per-request connection payload — OAuth tokens, per-tenant URLs,
+   credentials that must not land in YAML. Both are map-shaped so extensions
+   consume them with the same vocabulary.
+2. **`contentHash()`.** Extensions often derive cached state (schemas,
+   negotiated capabilities, HTTP clients) from the connection payload. The
+   SHA-256 hex fingerprint is a stable cache key: identical content → identical
+   hash, across JVM instances and restarts; any mutation → different hash. The
+   canonical form fed to SHA-256 is `key=value\n` lines sorted lexicographically
+   by key, values coerced through `String.valueOf(...)`. Documented as part of
+   the public contract, so the production impl and `FakeAgentExtension` produce
+   bit-identical hashes for the same input.
+
+Same unmodifiable guarantee as `AgentConfiguration`. Collision semantics with
+the profile source are a property of the `@Value` resolution surface, not of
+the map itself — the map always reports what the caller sent verbatim:
+
+- When `@Value("${k}")` is resolved and `k` exists in both the profile section
+  and the connection payload, **the profile value wins** and the agent emits
+  an `ERROR`-level log entry naming the shadowed key. Rationale: profile
+  properties are administrator-trust (they live in `config.yml`, which only the
+  agent operator edits); connection properties are caller-trust (they come in
+  with a request and should not be able to override admin-sanctioned config).
+- The connection map still carries the value verbatim, because extensions may
+  legitimately read it directly (e.g., log the raw value to prove what was
+  sent) — only the Spring-resolved `@Value` surface prefers the profile.
+
+Both `AgentExtensionV1Impl` (agent-core) and `FakeAgentExtension`
+(extension-test) **must** honour this rule identically; the contract test on
+both sides is the executable guarantee. Drift between them is a correctness
+bug, not a style issue.
 
 ### `AgentToolsV1` — agent-provided utilities bag
 
@@ -357,7 +411,7 @@ modules/extension-api/
         com/workato/agent/extension/api/
             package-info.java                                (Javadoc marker)
             AgentExtensionV1.java                            (entry point)
-            AgentExtensionContextV1.java                     (per-endpoint context + nested AgentConfiguration)
+            AgentExtensionContextV1.java                     (per-endpoint context + nested AgentConfiguration + ConnectionProperties)
             AgentWebhookV1.java                              (webhook transport + nested WebhookResponse / RetryPolicy / exceptions)
             AgentToolsV1.java                                (agent-provided utility bag — ObjectMapper for now)
     src/test/java/

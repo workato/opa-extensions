@@ -99,6 +99,12 @@ public final class AgentExtensionHarness
 
     public AgentExtensionHarness yaml(String classpathResource);
 
+    public AgentExtensionHarness connection(String key, Object value);
+
+    public AgentExtensionHarness connection(Map<String, Object> entries);
+
+    public AgentExtensionHarness connectionYaml(String classpathResource);
+
     public AgentExtensionHarness bean(String name, Object instance);
 
     public AgentExtensionHarness configuration(Class<?> configurationClass);
@@ -118,6 +124,8 @@ public final class AgentExtensionHarness
     public AgentExtensionV1 agentExtension();
 
     public FakeAgentWebhookV1 webhook();   // the fake the controller sees via webhook()
+
+    public ConnectionProperties connectionProperties();   // shortcut for agent.getContext().getConnectionProperties()
 
     public AnnotationConfigWebApplicationContext webApplicationContext();
 
@@ -209,9 +217,15 @@ Also preserves the production naming convention
 PropertySource by class and strips the suffix. Changing either the class name
 or the suffix is a breaking change for them.
 
+The connection view registers a sibling source named
+`"{profileName}ConnectionPropertySource"`. Distinct suffix on purpose so that
+the same strip-suffix trick still returns the profile name on the profile
+source, and never accidentally picks up the connection source. See also
+decision #4b for the collision rule between the two sources.
+
 ### 4. `AgentConfiguration` is unmodifiable in the harness too
 
-`FakeAgentExtension.unmodifiable(...)` wraps the properties in
+`FakeAgentExtension.unmodifiableConfiguration(...)` wraps the properties in
 `Collections.unmodifiableMap(new LinkedHashMap<>(src))` and exposes the view
 via an `AbstractMap`-based `AgentConfiguration`. Identical to the production
 `AgentExtensionV1Impl.UnmodifiableConfiguration`.
@@ -220,6 +234,41 @@ Why not just return a `LinkedHashMap`? Because a customer whose controller
 accidentally mutates the configuration (`cfg.put(...)`) would see the test
 pass and production fail with `UnsupportedOperationException`. Keeping the
 test's contract strictly as tight as production's is the point.
+
+### 4b. `ConnectionProperties` fidelity: unmodifiable, SHA-256 hex, profile wins
+
+`FakeAgentExtension.unmodifiableConnection(...)` mirrors the
+`unmodifiableConfiguration(...)` helper for the connection view — same
+defensive-copy + `Collections.unmodifiableMap` pattern, so the fake plugs the
+`Entry.setValue()` attack vector that pure `LinkedHashMap` subclassing would
+miss. The production counterpart in `agent-core` is expected to use the same
+wrapper.
+
+`contentHash()` is implemented in one shared static — `FakeAgentExtension.sha256Hex(...)` —
+which also serves as the oracle for the contract test
+(`ConnectionPropertiesTest.ContentHashSemantics.hashMatchesKnownVector`). The
+canonical form is documented on the API interface itself; both the test fake
+and the production impl must compute the hash the same way, bit-for-bit, so a
+cache key computed in a test run equals the one the agent would compute at
+runtime for the same payload. If the canonical form ever changes (e.g., value
+serialisation beyond `String.valueOf`), update both sides *and* the public
+Javadoc in the same change.
+
+Collision rule: profile wins. The harness's `filterOutShadowedConnectionKeys()`
+walks the connection map, logs an `ERROR` for every key also present on the
+profile side, and omits those keys from the `ConnectionPropertySource`. The
+profile `PropertySource` is added last via `addFirst`, so it lands in front
+and would win on ordering anyway; the filter is a belt-and-braces guarantee
+that the shadowed connection value is **unreachable** through `@Value`, not
+merely out-ranked. The connection map itself (returned by
+`getConnectionProperties()`) still reports the connection value verbatim —
+this is the user-visible distinction between "what was sent" and "what
+`@Value` resolves to," and it is pinned by
+`ConnectionPropertiesTest.ProfileWinsOnCollision.connectionMapStillReportsConnectionValueVerbatim`.
+
+The log message includes the profile name and the shadowed key, so a developer
+seeing an "unexpected" `@Value` result can trace the collision from a single
+test-log line.
 
 ### 4a. `getTools()` is a fresh `JsonMapper` in the harness
 
@@ -766,7 +815,7 @@ modules/extension-test/
             DeployedAgentLauncher.java                       (public API — in-process real-agent launcher)
             FakeAgentWebhookV1.java                       (public API — scripted fake for the webhook API)
             FakeAgentExtension.java                       (impl of AgentExtensionV1 for the harness)
-            EndpointPropertySource.java                      (impl of @Value lookup)
+            EndpointPropertySource.java                      (impl of @Value lookup — profile and connection sources)
             ControllerMethodResolver.java                    (SerializedLambda → path + HTTP method; shared)
     src/test/java/
         com/workato/agent/extension/test/

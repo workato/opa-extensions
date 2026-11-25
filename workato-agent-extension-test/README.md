@@ -26,12 +26,18 @@ Two complementary test-time tools for agent extensions:
 
 - `@Autowired AgentExtensionV1` into your controller
 - `@Value("${key}")` injection with the same direct-lookup semantics as the agent
-  (dots in keys are literal, not nesting separators)
+  (dots in keys are literal, not nesting separators), resolving against both
+  the profile section and the current connection payload
 - Request routing to `/ext/{profile-name}/*`
 - `@PathVariable`, `@RequestBody`, Spring MVC content negotiation
 - Service beans and `@ControllerAdvice` your controller depends on (register
   them with `.bean(...)` / `.configuration(...)` — nothing is auto-scanned)
 - Unmodifiable-view contract of `AgentExtensionContextV1.getProfileConfiguration()`
+- `AgentExtensionContextV1.getConnectionProperties()` — map + SHA-256
+  `contentHash()`; a dedicated `.connection(...)` / `.connectionYaml(...)`
+  builder surface sets what the controller sees, and the profile-wins
+  collision rule (with `ERROR`-level log on collision) is honoured identically
+  to production
 
 Out of scope for the harness: Jetty-specific HTTP behaviour (buffering,
 chunking, timeouts), the agent process lifecycle, classloader isolation —
@@ -278,20 +284,30 @@ absolute URLs the controller emits (e.g., `Location` headers that forget the
 
 ### Via `@Value("${key}")`
 
-Any key passed to `.property(k, v)` is resolvable with `@Value`:
+Any key passed to `.property(k, v)` or `.connection(k, v)` is resolvable with
+`@Value`:
 
 ```java
 
-@Value("${api.endpoint}")
+@Value("${api.endpoint}")           // profile side (.property / .yaml)
 private String endpoint;
 
-@Value("${api.timeout-ms:3000}")   // defaults supported
+@Value("${api.token}")              // connection side (.connection / .connectionYaml)
+private String apiToken;
+
+@Value("${api.timeout-ms:3000}")    // defaults supported
 private int timeoutMs;
 ```
 
 Dots are literal, not nesting separators — exactly like production
 `EndpointPropertySource`. A key `mail.pop3.username` is looked up as that
 literal string.
+
+**Profile wins on key collision with connection.** If the same key is
+registered on both sides, `@Value` resolves to the profile value and the
+harness emits an `ERROR` log entry naming the shadowed connection key. The
+connection map still reports the connection value verbatim — only `@Value`
+resolution prefers the profile. Rename either side to resolve the clash.
 
 ### Via `AgentExtensionV1`
 
@@ -301,6 +317,8 @@ literal string.
 AgentExtensionV1 agent;
 
 Map<String, Object> cfg = agent.getContext().getProfileConfiguration();
+Map<String, Object> conn = agent.getContext().getConnectionProperties();
+String connFingerprint = agent.getContext().getConnectionProperties().contentHash();
 String name = agent.getContext().getProfileName();
 ```
 
@@ -309,6 +327,49 @@ implementation returns: `put`/`remove`/`clear`/`putAll` throw
 `UnsupportedOperationException`. If your controller accidentally mutates the
 configuration, the test fails here rather than silently drifting from
 production behaviour.
+
+`getConnectionProperties()` carries the connection payload the harness was
+seeded with via `.connection(...)` / `.connectionYaml(...)`. Same unmodifiable
+guarantees as the profile view. The extra `contentHash()` accessor is a
+stable SHA-256 hex fingerprint of the content — use it as a cache key for
+state derived from the current connection payload, and test harness output
+is bit-identical to what the agent would compute in production for the same
+payload.
+
+### Setting up connection properties
+
+```java
+AgentExtensionHarness agent = AgentExtensionHarness.extension("my-profile")
+        .controller(MyController.class)
+        // Profile side (also feeds @Value):
+        .property("api.endpoint", "https://x")
+        // Connection side (also feeds @Value):
+        .connection("api.token", "secret-abc")
+        .connection("base-url", "https://tenant.example.com");
+```
+
+For larger payloads use `.connection(Map)` or declare them in a YAML fixture:
+
+```yaml
+extensions:
+  my-profile:
+    controller: com.example.MyController
+    api.endpoint: https://x
+connections:
+  my-profile:
+    api.token: abc-123
+    base-url: https://tenant.example.com
+```
+
+```java
+AgentExtensionHarness.extension("my-profile")
+        .yaml("extensions/my-profile.yml")            // profile section
+        .connectionYaml("extensions/my-profile.yml")  // connection section (same file, different top-level key)
+```
+
+The harness also exposes `agent.connectionProperties()` as a shortcut for
+`agent.getContext().getConnectionProperties()` — useful in asserts that read
+back the configured hash or specific entries.
 
 ## Testing webhook calls — `FakeAgentWebhookV1`
 

@@ -5,6 +5,8 @@ package com.workato.agent.extension.test;
 
 import com.workato.agent.extension.api.AgentExtensionV1;
 import org.junit.jupiter.api.extension.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.AnnotatedGenericBeanDefinition;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.beans.factory.support.BeanDefinitionRegistry;
@@ -87,9 +89,11 @@ public final class AgentExtensionHarness
         implements BeforeAllCallback, AfterAllCallback, BeforeEachCallback, AfterEachCallback {
 
     private static final ObjectMapper YAML = YAMLMapper.builder().build();
+    private static final Logger LOG = LoggerFactory.getLogger(AgentExtensionHarness.class);
 
     private final String profileName;
     private final Map<String, Object> properties = new LinkedHashMap<>();
+    private final Map<String, Object> connectionProperties = new LinkedHashMap<>();
     private final Map<String, Object> extraBeans = new LinkedHashMap<>();
     private final List<Class<?>> extraConfigurations = new ArrayList<>();
 
@@ -187,6 +191,97 @@ public final class AgentExtensionHarness
     public AgentExtensionHarness property(String key, Object value) {
         properties.put(key, value);
         return this;
+    }
+
+    /**
+     * Add a key/value to the extension's connection-scoped property view (the one returned by
+     * {@code AgentExtensionV1.getContext().getConnectionProperties()}). Available via that map
+     * <em>and</em> via {@code @Value("${key}")} on the controller — the same resolution surface
+     * profile properties use. Dots in keys are literal (no nesting), matching the profile
+     * convention.
+     *
+     * <p><b>Collision with a profile key is logged as an ERROR and the profile wins.</b> If a
+     * key appears in both {@link #property(String, Object)} and this method, {@code @Value}
+     * resolves to the profile value; the connection map still reports the value supplied here
+     * (it is a verbatim view of what the test registered), but it is unreachable through
+     * {@code @Value}. See {@link com.workato.agent.extension.api.AgentExtensionContextV1#getConnectionProperties()}.
+     */
+    public AgentExtensionHarness connection(String key, Object value) {
+        connectionProperties.put(key, value);
+        return this;
+    }
+
+    /**
+     * Bulk variant of {@link #connection(String, Object)} — adds every entry of the given map
+     * to the connection view. {@code null} and empty maps are no-ops. Existing keys are
+     * overwritten; use the single-key method for one-off values.
+     */
+    public AgentExtensionHarness connection(Map<String, Object> entries) {
+        if (entries == null || entries.isEmpty()) {
+            return this;
+        }
+        connectionProperties.putAll(entries);
+        return this;
+    }
+
+    /**
+     * Load connection properties from a YAML resource on the classpath. The resource must
+     * contain a {@code connections:} section with an entry whose key equals this harness's
+     * profile name; the entry's children become the connection properties. Shape mirrors
+     * {@link #yaml(String)} but under a different top-level key so the two kinds of properties
+     * stay separate in a single YAML file.
+     *
+     * <p>Example YAML:
+     * <pre>{@code
+     * connections:
+     *   my-profile:
+     *     api.token: abc-123
+     *     base-url: https://api.example.com
+     * }</pre>
+     * <p>
+     * Subsequent {@link #connection(String, Object)} calls win over the YAML (same precedence
+     * rule {@link #yaml(String)} applies to profile properties).
+     */
+    public AgentExtensionHarness connectionYaml(String classpathResource) {
+        Map<String, Object> section = loadYamlSection(classpathResource, "connections");
+        Map<String, Object> merged = new LinkedHashMap<>(section);
+        merged.putAll(connectionProperties);
+        connectionProperties.clear();
+        connectionProperties.putAll(merged);
+        return this;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> loadYamlSection(String classpathResource, String topLevelKey) {
+        if (classpathResource == null || classpathResource.isBlank()) {
+            throw new IllegalArgumentException("YAML resource path must not be blank");
+        }
+        ClassLoader cl = Thread.currentThread().getContextClassLoader();
+        if (cl == null) {
+            cl = AgentExtensionHarness.class.getClassLoader();
+        }
+        try (InputStream in = cl.getResourceAsStream(classpathResource)) {
+            if (in == null) {
+                throw new IllegalArgumentException("YAML resource not found on classpath: " + classpathResource);
+            }
+            Map<String, Object> parsed = YAML.readValue(in, Map.class);
+            Object root = parsed == null ? null : parsed.get(topLevelKey);
+            if (!(root instanceof Map<?, ?> rootMap)) {
+                throw new IllegalStateException(
+                        "YAML resource " + classpathResource + " has no '" + topLevelKey + ":' section");
+            }
+            Object section = rootMap.get(profileName);
+            if (!(section instanceof Map<?, ?> sectionMap)) {
+                throw new IllegalStateException(
+                        "YAML resource " + classpathResource + " has no '"
+                                + topLevelKey + "." + profileName + ":' section");
+            }
+            return (Map<String, Object>) sectionMap;
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to read YAML resource " + classpathResource, e);
+        }
     }
 
     /**
@@ -356,8 +451,17 @@ public final class AgentExtensionHarness
             // same name shadow the parent's — standard Spring child-context semantics.
             ctx.setParent(parentContext);
         }
+        // Add the connection source first so the profile source lands in front of it — profile
+        // wins on conflict (documented in AgentExtensionContextV1#getConnectionProperties).
+        // Shadowed connection keys are logged at ERROR so a test author sees why their @Value
+        // resolved to the profile value even when they supplied a connection override.
+        Map<String, Object> visibleConnection = filterOutShadowedConnectionKeys();
+        if (!visibleConnection.isEmpty()) {
+            ctx.getEnvironment().getPropertySources().addFirst(
+                    EndpointPropertySource.forConnection(profileName, visibleConnection));
+        }
         ctx.getEnvironment().getPropertySources().addFirst(
-                new EndpointPropertySource(profileName, properties));
+                EndpointPropertySource.forProfile(profileName, properties));
         ctx.addBeanFactoryPostProcessor(new HarnessBeanRegistrar());
         ctx.register(MvcConfig.class);
         for (Class<?> cfg : extraConfigurations) {
@@ -415,6 +519,17 @@ public final class AgentExtensionHarness
     public FakeAgentWebhookV1 webhook() {
         ensureStarted();
         return webhook;
+    }
+
+    /**
+     * The {@link com.workato.agent.extension.api.AgentExtensionContextV1.ConnectionProperties}
+     * the controller sees through {@code agent.getContext().getConnectionProperties()} —
+     * convenience accessor equivalent to that chain. Exposed as a shortcut for tests that
+     * assert on the fingerprint ({@code contentHash()}) or on specific entries.
+     */
+    public com.workato.agent.extension.api.AgentExtensionContextV1.ConnectionProperties connectionProperties() {
+        ensureStarted();
+        return agentExtension().getContext().getConnectionProperties();
     }
 
     /**
@@ -544,6 +659,24 @@ public final class AgentExtensionHarness
         }
     }
 
+    private Map<String, Object> filterOutShadowedConnectionKeys() {
+        if (connectionProperties.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Object> visible = new LinkedHashMap<>(connectionProperties.size());
+        for (Map.Entry<String, Object> e : connectionProperties.entrySet()) {
+            if (properties.containsKey(e.getKey())) {
+                LOG.error("Extension '{}': connection property '{}' is shadowed by a profile property "
+                                + "with the same key and will NOT be visible via @Value — profile properties "
+                                + "always win on collision. Rename either the connection or the profile key.",
+                        profileName, e.getKey());
+                continue;
+            }
+            visible.put(e.getKey(), e.getValue());
+        }
+        return visible;
+    }
+
     // ---- internals ---------------------------------------------------------------------------
 
     /**
@@ -670,7 +803,7 @@ public final class AgentExtensionHarness
         @Override
         public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) {
             beanFactory.registerSingleton("agentExtension",
-                    new FakeAgentExtension(profileName, properties, webhook));
+                    new FakeAgentExtension(profileName, properties, connectionProperties, webhook));
             if (controllerInstance != null) {
                 beanFactory.registerSingleton("controller", controllerInstance);
             }

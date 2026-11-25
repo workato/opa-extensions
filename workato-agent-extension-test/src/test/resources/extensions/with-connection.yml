@@ -1,0 +1,7 @@
+extensions:
+  my-profile:
+    controller: com.workato.agent.extension.test.testext.ConnectionValueController
+    greeting: hello
+connections:
+  my-profile:
+    api.token: yaml-sourced-token
