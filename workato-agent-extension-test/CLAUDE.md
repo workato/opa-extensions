@@ -217,11 +217,15 @@ Also preserves the production naming convention
 PropertySource by class and strips the suffix. Changing either the class name
 or the suffix is a breaking change for them.
 
-The connection view registers a sibling source named
-`"{profileName}ConnectionPropertySource"`. Distinct suffix on purpose so that
-the same strip-suffix trick still returns the profile name on the profile
-source, and never accidentally picks up the connection source. See also
-decision #4b for the collision rule between the two sources.
+The connection payload is deliberately **not** registered as a PropertySource
+on the Environment — plain-field `@Value` would otherwise reach it, which
+violates the visibility matrix in decision #4b. Connection reachability is
+instead layered on through the autowire-candidate resolver and the handler-method
+argument resolver. The `EndpointPropertySource.forConnection(...)` factory is
+still present and exposed as a utility for future custom wiring, but the
+harness itself does not call it at runtime. If a future revision wants
+connection content to be environment-visible for some targeted subset
+(say, via a custom profile), the factory is the obvious entry point.
 
 ### 4. `AgentConfiguration` is unmodifiable in the harness too
 
@@ -254,21 +258,53 @@ runtime for the same payload. If the canonical form ever changes (e.g., value
 serialisation beyond `String.valueOf`), update both sides *and* the public
 Javadoc in the same change.
 
-Collision rule: profile wins. The harness's `filterOutShadowedConnectionKeys()`
-walks the connection map, logs an `ERROR` for every key also present on the
-profile side, and omits those keys from the `ConnectionPropertySource`. The
-profile `PropertySource` is added last via `addFirst`, so it lands in front
-and would win on ordering anyway; the filter is a belt-and-braces guarantee
-that the shadowed connection value is **unreachable** through `@Value`, not
-merely out-ranked. The connection map itself (returned by
-`getConnectionProperties()`) still reports the connection value verbatim —
-this is the user-visible distinction between "what was sent" and "what
-`@Value` resolves to," and it is pinned by
-`ConnectionPropertiesTest.ProfileWinsOnCollision.connectionMapStillReportsConnectionValueVerbatim`.
+#### `@Value` visibility matrix
 
-The log message includes the profile name and the shadowed key, so a developer
-seeing an "unexpected" `@Value` result can trace the collision from a single
-test-log line.
+| `@Value` site                          | Sees profile | Sees connection |
+|----------------------------------------|--------------|-----------------|
+| Plain-type field (`String`, `int`, …)  | yes          | no              |
+| `Supplier<T>` field                    | yes          | yes             |
+| Handler-method parameter (plain)       | yes          | yes             |
+| Handler-method parameter `Supplier<T>` | yes          | yes             |
+
+Three pieces of machinery enforce this matrix:
+
+1. **Profile `PropertySource` in the `Environment`.** Only the profile source
+   lives on the `Environment`. Plain-field `@Value` goes through Spring's
+   default placeholder resolution, which walks the `Environment` — so plain
+   fields are profile-only by construction. A plain field pointed at a
+   connection-only key fails bean creation at the
+   `PropertySourcesPlaceholderConfigurer` registered by `MvcConfig` (pinned by
+   `PlainFieldValueVisibilityTest.plainFieldReferringToConnectionOnlyKeyFailsBeanCreation`).
+
+2. **`ProfileAndConnectionAutowireCandidateResolver`.** A
+   `ContextAnnotationAutowireCandidateResolver` subclass set on the bean
+   factory by `HarnessBeanRegistrar.postProcessBeanFactory`. Its
+   `getSuggestedValue(DependencyDescriptor)` intercepts `@Value` targets whose
+   type is `Supplier<T>` and returns a resolving `Supplier` that reads from
+   profile and connection via `PropertyResolution`. Plain-type `@Value` falls
+   through to the superclass unchanged. Covers field, constructor, and setter
+   injection; pinned by `SupplierValueControllerTest`.
+
+3. **`ProfileAndConnectionValueArgumentResolver` + `ArgumentResolverRegistrar`.**
+   The resolver is a `HandlerMethodArgumentResolver` that supports `@Value` on
+   handler-method parameters (plain or `Supplier`-shaped). The registrar is a
+   `BeanPostProcessor` that, after `RequestMappingHandlerAdapter` finishes
+   `afterPropertiesSet`, **prepends** the resolver to the adapter's resolver
+   list so it wins over Spring's built-in `ExpressionValueMethodArgumentResolver`.
+   `WebMvcConfigurer#addArgumentResolvers` is not usable here — it appends
+   customs after defaults. Pinned by `MethodParamValueControllerTest` and the
+   method-param side of `SupplierValueControllerTest`.
+
+#### Collision rule
+
+Profile wins on collision at the `PropertyResolution.resolve(...)` call site:
+when the same key is present in both maps, the resolver logs an `ERROR`
+naming the profile and shadowed key, returns the profile value, and leaves
+the connection map intact (callers can still read the raw value verbatim).
+Pinned by `ConnectionPropertiesTest.ProfileWinsOnCollision`. There is no
+upfront filter — detection happens on each resolution call, so the log fires
+at the actual moment of injection.
 
 ### 4a. `getTools()` is a fresh `JsonMapper` in the harness
 
@@ -815,7 +851,11 @@ modules/extension-test/
             DeployedAgentLauncher.java                       (public API — in-process real-agent launcher)
             FakeAgentWebhookV1.java                       (public API — scripted fake for the webhook API)
             FakeAgentExtension.java                       (impl of AgentExtensionV1 for the harness)
-            EndpointPropertySource.java                      (impl of @Value lookup — profile and connection sources)
+            EndpointPropertySource.java                      (impl of @Value lookup — profile source only; connection factory kept for future custom wiring)
+            PropertyResolution.java                          (shared profile+connection resolver — profile wins, ERROR log on collision)
+            ProfileAndConnectionAutowireCandidateResolver.java (@Value Supplier<T> on autowired targets reaches both sources)
+            ProfileAndConnectionValueArgumentResolver.java   (@Value on handler method params reaches both sources)
+            ArgumentResolverRegistrar.java                   (prepends ProfileAndConnection resolver ahead of Spring defaults)
             ControllerMethodResolver.java                    (SerializedLambda → path + HTTP method; shared)
     src/test/java/
         com/workato/agent/extension/test/

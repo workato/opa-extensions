@@ -3,8 +3,6 @@
  */
 package com.workato.agent.extension.test.testext;
 
-import com.workato.agent.extension.api.AgentExtensionV1;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -14,28 +12,20 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Probe controller for {@code ConnectionPropertiesEndToEndTest}: pulls one {@code @Value} from
- * the profile side ({@code greeting}) and one from the connection side ({@code api.token}).
- * Confirms both PropertySources are visible to Spring's value resolver.
+ * Probe: a plain {@code @Value} field resolves against the profile source. Used by both the
+ * positive end-to-end test and the negative test that proves a plain-field reference to a
+ * connection-only key fails at bean creation time.
  */
 @RestController
-public class ConnectionValueController {
-
-    @Autowired
-    AgentExtensionV1 agent;
+public class PlainFieldOnlyProfileController {
 
     @Value("${greeting}")
     String greeting;
-
-    @Value("${api.token}")
-    String apiToken;
 
     @GetMapping(value = "/probe", produces = MediaType.APPLICATION_JSON_VALUE)
     public Map<String, Object> probe() {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("greeting", greeting);
-        body.put("apiToken", apiToken);
-        body.put("connectionHash", agent.getContext().getConnectionProperties().contentHash());
         return body;
     }
 }

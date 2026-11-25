@@ -243,6 +243,25 @@ the map itself — the map always reports what the caller sent verbatim:
   legitimately read it directly (e.g., log the raw value to prove what was
   sent) — only the Spring-resolved `@Value` surface prefers the profile.
 
+Visibility across `@Value` sites — enforced by the test harness, matched by
+the production impl:
+
+| Site                                   | Sees profile | Sees connection |
+|----------------------------------------|--------------|-----------------|
+| Plain-type field (`String`, `int`, …)  | yes          | no              |
+| `Supplier<T>` field                    | yes          | yes             |
+| Handler-method parameter (plain)       | yes          | yes             |
+| Handler-method parameter `Supplier<T>` | yes          | yes             |
+
+The restriction on plain-field access exists because fields are bound once at
+bean creation, before any request arrives — the connection payload logically
+belongs to the request, so binding it onto a long-lived field has the wrong
+lifecycle. Supplier shape is the opt-in late-binding signal. Method parameters
+are naturally per-call. Any attempt to use a plain field `@Value` against a
+connection-only key fails bean creation with an unresolvable-placeholder
+error, which is deliberate: the alternative (silent `null` or the literal
+`${key}` string) would ship a half-configured extension to prod.
+
 Both `AgentExtensionV1Impl` (agent-core) and `FakeAgentExtension`
 (extension-test) **must** honour this rule identically; the contract test on
 both sides is the executable guarantee. Drift between them is a correctness

@@ -29,7 +29,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *   <li>Profile-wins-on-collision rule, including that {@code @Value} resolution ignores the
  *       shadowed connection entry (collision logging itself is a side effect verified by
  *       inspection — adding a log-capture dependency is overkill for one WARN line).</li>
+ *   <li>Environment-level visibility rule: profile keys are a PropertySource (plain-field
+ *       {@code @Value} sees them), connection keys are not — they reach controllers only through
+ *       {@code Supplier<T>} injection or handler-method parameter injection.</li>
  * </ul>
+ *
+ * <p>End-to-end {@code @Value} wiring is pinned by sibling tests:
+ * {@link SupplierValueControllerTest} (Supplier-shaped field and method parameter) and
+ * {@link MethodParamValueControllerTest} (plain method parameter).
  */
 class ConnectionPropertiesTest extends AbstractExtensionTest {
 
@@ -131,10 +138,10 @@ class ConnectionPropertiesTest extends AbstractExtensionTest {
         }
     }
 
-    // ---- @Value resolution falls through to the connection source -----------------------------
+    // ---- @Value resolution surfaces: profile is in the Environment, connection is not --------
 
     @Nested
-    class ValueInjection {
+    class EnvironmentVisibility {
 
         @RegisterExtension
         AgentExtensionHarness agent = AgentExtensionHarness.extension("my-profile")
@@ -142,14 +149,27 @@ class ConnectionPropertiesTest extends AbstractExtensionTest {
                 .connection("api.token", "injected-value");
 
         @Test
-        void valueAnnotationResolvesConnectionKey() {
-            // The controller declared in echo.yml (EchoController) carries a @Value("${greeting}")
-            // resolved against the profile; we only exercise that here indirectly by verifying
-            // the property source list contains the connection source after start().
-            // Direct wiring of a @Value against a connection key is covered by
-            // ConnectionValueControllerTest.
+        void environmentExposesProfileKeys() {
+            // Profile keys land in the Environment as a PropertySource — this is what plain @Value
+            // on a bean field resolves against.
+            assertThat(agent.webApplicationContext().getEnvironment().getProperty("greeting"))
+                    .isEqualTo("hello");
+        }
+
+        @Test
+        void environmentDoesNotExposeConnectionKeys() {
+            // By design: the connection payload is NOT a PropertySource. Plain @Value on a bean
+            // field therefore cannot see it — Supplier<T> fields and handler method parameters go
+            // through side-channel resolvers that reach the connection payload.
             assertThat(agent.webApplicationContext().getEnvironment().getProperty("api.token"))
-                    .isEqualTo("injected-value");
+                    .isNull();
+        }
+
+        @Test
+        void connectionMapStillSurfacesConnectionKeys() {
+            // Independent of the Environment, the connection data is always visible through the
+            // AgentExtensionV1 API (and the harness shortcut accessor).
+            assertThat(agent.connectionProperties().get("api.token")).isEqualTo("injected-value");
         }
     }
 

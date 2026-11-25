@@ -138,13 +138,10 @@ public interface AgentExtensionContextV1 {
 | `getProfileConfiguration()` | Your extension's YAML section as a map, including the `controller` / `controllerClass` key alongside your custom properties. Snapshot — does not change across agent YAML reloads.                                                                                                                                              |
 | `getConnectionProperties()` | Connection-scoped properties attached to the current endpoint (OAuth tokens, per-tenant URLs, credentials that must not live in a YAML file). Also map-shaped and unmodifiable; adds `contentHash()` — a stable SHA-256 fingerprint of the content, useful as a cache key when the extension derives state from the connection. |
 
-Every entry under `getConnectionProperties()` is also resolvable via
-`@Value("${key}")` on your controller, exactly like entries under
-`getProfileConfiguration()`. **Profile properties win on key collision:** if the
-same key appears in both, `@Value` resolves to the profile value and the agent
-emits an `ERROR`-level log entry flagging the shadowed connection key. The
-connection map still reports the connection-supplied value verbatim (it is a
-passthrough of what the caller sent); only `@Value` resolution is overridden.
+Entries under `getConnectionProperties()` are reachable through `@Value` with
+site-dependent visibility — see the dedicated [Property injection with
+`@Value`](#property-injection-with-value) section below for the full matrix
+and the collision rule.
 
 > **Each extension sees only its own profile.** There is no API for discovering
 > other extensions' configuration. (Note that this does not provide full
@@ -426,8 +423,48 @@ the empty canonical form, not `null` and not a sentinel.
 
 ## Property injection with `@Value`
 
-Any key under your extension's YAML section or the current connection payload
-is injectable via Spring's `@Value("${key}")`:
+`@Value("${key}")` resolves against two data sources: your extension's YAML
+section (the **profile**) and the connection payload attached to the current
+request (the **connection**). The visibility rule depends on *where* the
+`@Value` sits, not on the key — each injection site has one row in the matrix
+below.
+
+### `@Value` on a field
+
+| Form                           | Sees profile | Sees connection | When it resolves           | What you get                                                                                                                   |
+|--------------------------------|--------------|-----------------|----------------------------|--------------------------------------------------------------------------------------------------------------------------------|
+| `@Value("${k}") String s`      | yes          | **no**          | once, at bean creation     | the resolved value, converted to the target type; bean creation fails if the key is connection-only or missing with no default |
+| `@Value("${k:default}") int n` | yes          | **no**          | once, at bean creation     | the resolved value or the default, converted to the target type                                                                |
+| `@Value("${k}") Supplier<T> s` | yes          | yes             | lazily, on every `s.get()` | a `Supplier<T>` whose `get()` returns the currently-resolved value                                                             |
+
+The plain-field case is deliberately profile-only: a plain field is bound
+once, before any request has arrived, and the connection payload logically
+belongs to the request. Declaring the field as `Supplier<T>` is the opt-in
+signal for "late binding, see both sources."
+
+### `@Value` on a handler-method parameter
+
+| Form                           | Sees profile | Sees connection | When it resolves           | What you get                                                                 |
+|--------------------------------|--------------|-----------------|----------------------------|------------------------------------------------------------------------------|
+| `@Value("${k}") String s`      | yes          | yes             | on every HTTP request      | the resolved value for this call, converted to the parameter type            |
+| `@Value("${k:default}") int n` | yes          | yes             | on every HTTP request      | the resolved value or the default, converted to the parameter type           |
+| `@Value("${k}") Supplier<T> s` | yes          | yes             | lazily, on every `s.get()` | a `Supplier<T>` (handy if you call `get()` several times inside the handler) |
+
+Method parameters are per-call by nature, so both sources are always visible —
+no distinction between plain and `Supplier` for visibility, only for timing.
+Mix freely with `@RequestBody`, `@PathVariable`, `@RequestParam`.
+
+### Collision rule
+
+If the same key appears in both the profile section and the connection
+payload, every `@Value` resolution that reaches both sources returns the
+**profile** value and the agent logs an `ERROR`-level entry naming the
+shadowed connection key. The connection map
+(`getContext().getConnectionProperties()`) still reports the connection value
+verbatim — only `@Value` resolution prefers the profile. Rename either side
+to resolve the clash.
+
+### Idioms
 
 ```yaml
 extensions:
@@ -438,27 +475,30 @@ extensions:
 ```
 
 ```java
-
-@Value("${api.endpoint}")           // from the profile YAML
+// Admin-config, stable for the agent's lifetime — plain field, profile source.
+@Value("${api.endpoint}")
 private String endpoint;
 
-@Value("${api.token}")              // from the connection payload
-private String apiToken;
+// Credential that can change between requests — Supplier field, both sources.
+@Value("${api.token}")
+private Supplier<String> apiToken;   // apiToken.get() — the current value
 
-@Value("${api.timeout-ms:3000}")    // defaults supported
-private int timeoutMs;
+@PostMapping("/op")
+public Map<String, Object> handle(
+        @RequestBody Map<String, Object> payload,
+        @Value("${api.endpoint}") String endpoint,                // profile
+        @Value("${api.token}") String token,                      // connection, eager
+        @Value("${api.secret}") Supplier<String> secret,          // connection, lazy
+        @Value("${api.timeout-ms:3000}") int timeoutMs) {         // profile with default
+    // ...
+}
 ```
 
-Dots in YAML keys are treated as literal characters, not nesting separators —
-the lookup is a direct map `get()`. If you have a nested YAML section and want
-to inject individual leaves, flatten the keys or inject the parent `Map`.
-
-**Profile properties win on collision with connection properties.** If the same
-key is present in both your YAML section and the current connection payload,
-`@Value` resolves to the profile value and the agent emits an `ERROR`-level log
-entry naming the shadowed connection key. The connection map still reports the
-connection value verbatim — only `@Value` resolution is overridden. Rename
-either side to resolve the clash.
+Dots in YAML keys are literal characters, not nesting separators — the lookup
+is a direct map `get()`. A key `mail.pop3.username` is looked up as that exact
+string; if you have a nested YAML section and want to inject individual
+leaves, flatten the keys or inject the parent `Map` through
+`getProfileConfiguration()`.
 
 ## Migrating from the legacy API
 

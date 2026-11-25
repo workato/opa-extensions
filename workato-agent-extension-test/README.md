@@ -284,30 +284,67 @@ absolute URLs the controller emits (e.g., `Location` headers that forget the
 
 ### Via `@Value("${key}")`
 
-Any key passed to `.property(k, v)` or `.connection(k, v)` is resolvable with
-`@Value`:
+The harness enforces the same `@Value` matrix the production agent does.
+Visibility depends on where the `@Value` sits — each injection site has one
+row below.
+
+#### `@Value` on a field
+
+| Form                           | Sees profile (`.property` / `.yaml`) | Sees connection (`.connection` / `.connectionYaml`) | When it resolves           | What you get                                                                                                                   |
+|--------------------------------|--------------------------------------|-----------------------------------------------------|----------------------------|--------------------------------------------------------------------------------------------------------------------------------|
+| `@Value("${k}") String s`      | yes                                  | **no**                                              | once, at bean creation     | the resolved value, converted to the target type; bean creation fails if the key is connection-only or missing with no default |
+| `@Value("${k:default}") int n` | yes                                  | **no**                                              | once, at bean creation     | the resolved value or the default, converted to the target type                                                                |
+| `@Value("${k}") Supplier<T> s` | yes                                  | yes                                                 | lazily, on every `s.get()` | a `Supplier<T>` whose `get()` returns the currently-resolved value                                                             |
+
+Pinned by `PlainFieldValueVisibilityTest` (both the positive-profile and
+negative-connection paths) and `SupplierValueControllerTest` (Supplier field).
+
+#### `@Value` on a handler-method parameter
+
+| Form                           | Sees profile | Sees connection | When it resolves           | What you get                                                                  |
+|--------------------------------|--------------|-----------------|----------------------------|-------------------------------------------------------------------------------|
+| `@Value("${k}") String s`      | yes          | yes             | on every HTTP request      | the resolved value for this call, converted to the parameter type             |
+| `@Value("${k:default}") int n` | yes          | yes             | on every HTTP request      | the resolved value or the default, converted to the parameter type            |
+| `@Value("${k}") Supplier<T> s` | yes          | yes             | lazily, on every `s.get()` | a `Supplier<T>` (handy if `get()` is called several times inside the handler) |
+
+Pinned by `MethodParamValueControllerTest` (plain) and
+`SupplierValueControllerTest` (Supplier). Mix freely with `@RequestBody`,
+`@PathVariable`, `@RequestParam` in one signature.
+
+#### Collision rule
+
+If the same key is registered on both sides, every `@Value` resolution that
+reaches both sources returns the **profile** value and the harness logs an
+`ERROR`-level entry naming the shadowed connection key. The connection map
+still reports the connection value verbatim — only `@Value` resolution prefers
+the profile. Pinned by
+`ConnectionPropertiesTest.ProfileWinsOnCollision`.
+
+#### Idioms
 
 ```java
-
-@Value("${api.endpoint}")           // profile side (.property / .yaml)
+// Admin-config, stable for the whole bean lifetime — plain field, profile source.
+@Value("${api.endpoint}")
 private String endpoint;
 
-@Value("${api.token}")              // connection side (.connection / .connectionYaml)
-private String apiToken;
+// Credential that can change between requests — Supplier field, both sources.
+@Value("${api.token}")
+private Supplier<String> apiTokenSupplier;
 
-@Value("${api.timeout-ms:3000}")    // defaults supported
-private int timeoutMs;
+@PostMapping("/op")
+public Response handle(
+        @RequestBody Request body,
+        @Value("${api.endpoint}") String endpoint,                // profile, eager
+        @Value("${api.token}") String token,                      // connection, eager
+        @Value("${api.secret}") Supplier<String> secret,          // connection, lazy
+        @Value("${api.timeout-ms:3000}") int timeoutMs) {         // profile with default
+    // ...
+}
 ```
 
-Dots are literal, not nesting separators — exactly like production
+Dots in keys are literal, not nesting separators — exactly like production
 `EndpointPropertySource`. A key `mail.pop3.username` is looked up as that
 literal string.
-
-**Profile wins on key collision with connection.** If the same key is
-registered on both sides, `@Value` resolves to the profile value and the
-harness emits an `ERROR` log entry naming the shadowed connection key. The
-connection map still reports the connection value verbatim — only `@Value`
-resolution prefers the profile. Rename either side to resolve the clash.
 
 ### Via `AgentExtensionV1`
 
@@ -363,8 +400,12 @@ connections:
 
 ```java
 AgentExtensionHarness.extension("my-profile")
-        .yaml("extensions/my-profile.yml")            // profile section
-        .connectionYaml("extensions/my-profile.yml")  // connection section (same file, different top-level key)
+        .
+
+yaml("extensions/my-profile.yml")            // profile section
+        .
+
+connectionYaml("extensions/my-profile.yml")  // connection section (same file, different top-level key)
 ```
 
 The harness also exposes `agent.connectionProperties()` as a shortcut for

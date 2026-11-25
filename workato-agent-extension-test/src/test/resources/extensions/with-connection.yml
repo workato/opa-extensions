@@ -1,6 +1,6 @@
 extensions:
   my-profile:
-    controller: com.workato.agent.extension.test.testext.ConnectionValueController
+    controller: com.workato.agent.extension.test.testext.MethodParamValueController
     greeting: hello
 connections:
   my-profile:

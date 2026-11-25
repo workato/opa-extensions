@@ -5,14 +5,15 @@ package com.workato.agent.extension.test;
 
 import com.workato.agent.extension.api.AgentExtensionV1;
 import org.junit.jupiter.api.extension.*;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.AnnotatedGenericBeanDefinition;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.beans.factory.support.BeanDefinitionRegistry;
 import org.springframework.beans.factory.support.BeanDefinitionRegistryPostProcessor;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.support.PropertySourcesPlaceholderConfigurer;
 import org.springframework.mock.web.MockServletContext;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
@@ -89,7 +90,6 @@ public final class AgentExtensionHarness
         implements BeforeAllCallback, AfterAllCallback, BeforeEachCallback, AfterEachCallback {
 
     private static final ObjectMapper YAML = YAMLMapper.builder().build();
-    private static final Logger LOG = LoggerFactory.getLogger(AgentExtensionHarness.class);
 
     private final String profileName;
     private final Map<String, Object> properties = new LinkedHashMap<>();
@@ -451,18 +451,19 @@ public final class AgentExtensionHarness
             // same name shadow the parent's — standard Spring child-context semantics.
             ctx.setParent(parentContext);
         }
-        // Add the connection source first so the profile source lands in front of it — profile
-        // wins on conflict (documented in AgentExtensionContextV1#getConnectionProperties).
-        // Shadowed connection keys are logged at ERROR so a test author sees why their @Value
-        // resolved to the profile value even when they supplied a connection override.
-        Map<String, Object> visibleConnection = filterOutShadowedConnectionKeys();
-        if (!visibleConnection.isEmpty()) {
-            ctx.getEnvironment().getPropertySources().addFirst(
-                    EndpointPropertySource.forConnection(profileName, visibleConnection));
-        }
+        // Only the profile goes into the Environment's PropertySources. Plain @Value on a bean
+        // field goes through Spring's default placeholder resolution, which walks the Environment
+        // — so plain-field @Value is profile-only by construction. The connection payload is
+        // reached via two side-channels:
+        //   (a) ProfileAndConnectionAutowireCandidateResolver — makes @Value Supplier<T> on
+        //       autowired targets (fields, constructor / setter params) see both sources.
+        //   (b) ProfileAndConnectionValueArgumentResolver — makes @Value on handler method
+        //       params see both sources, plain or Supplier-shaped.
+        // Collision rule (profile wins + ERROR log) is applied inside PropertyResolution.
         ctx.getEnvironment().getPropertySources().addFirst(
                 EndpointPropertySource.forProfile(profileName, properties));
-        ctx.addBeanFactoryPostProcessor(new HarnessBeanRegistrar());
+        PropertyResolution resolution = new PropertyResolution(profileName, properties, connectionProperties);
+        ctx.addBeanFactoryPostProcessor(new HarnessBeanRegistrar(resolution));
         ctx.register(MvcConfig.class);
         for (Class<?> cfg : extraConfigurations) {
             ctx.register(cfg);
@@ -659,23 +660,6 @@ public final class AgentExtensionHarness
         }
     }
 
-    private Map<String, Object> filterOutShadowedConnectionKeys() {
-        if (connectionProperties.isEmpty()) {
-            return Map.of();
-        }
-        Map<String, Object> visible = new LinkedHashMap<>(connectionProperties.size());
-        for (Map.Entry<String, Object> e : connectionProperties.entrySet()) {
-            if (properties.containsKey(e.getKey())) {
-                LOG.error("Extension '{}': connection property '{}' is shadowed by a profile property "
-                                + "with the same key and will NOT be visible via @Value — profile properties "
-                                + "always win on collision. Rename either the connection or the profile key.",
-                        profileName, e.getKey());
-                continue;
-            }
-            visible.put(e.getKey(), e.getValue());
-        }
-        return visible;
-    }
 
     // ---- internals ---------------------------------------------------------------------------
 
@@ -784,6 +768,17 @@ public final class AgentExtensionHarness
     @Configuration
     @EnableWebMvc
     static class MvcConfig {
+
+        /**
+         * Registers a {@link PropertySourcesPlaceholderConfigurer} so unresolvable placeholders
+         * throw instead of silently leaving the literal {@code ${key}} in the field value. Matches
+         * the production agent's wiring and makes the harness's "plain field = profile only"
+         * visibility rule enforceable at bean-creation time rather than discoverable at runtime.
+         */
+        @Bean
+        static PropertySourcesPlaceholderConfigurer propertySourcesPlaceholderConfigurer() {
+            return new PropertySourcesPlaceholderConfigurer();
+        }
     }
 
     /**
@@ -792,6 +787,12 @@ public final class AgentExtensionHarness
      * {@link #bean(String, Object)}. Mirrors the agent's own {@code EndpointBeanRegistrar} in shape.
      */
     private final class HarnessBeanRegistrar implements BeanDefinitionRegistryPostProcessor {
+
+        private final PropertyResolution resolution;
+
+        HarnessBeanRegistrar(PropertyResolution resolution) {
+            this.resolution = resolution;
+        }
 
         @Override
         public void postProcessBeanDefinitionRegistry(BeanDefinitionRegistry registry) {
@@ -802,6 +803,19 @@ public final class AgentExtensionHarness
 
         @Override
         public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) {
+            // AnnotationConfigUtils installed a ContextAnnotationAutowireCandidateResolver during
+            // the registry phase; replace it with our subclass so @Value Supplier<T> on autowired
+            // targets (fields, ctor / setter params) can see the connection payload. Plain @Value
+            // flows through the superclass unchanged — Environment → profile only.
+            if (beanFactory instanceof DefaultListableBeanFactory dlbf) {
+                dlbf.setAutowireCandidateResolver(new ProfileAndConnectionAutowireCandidateResolver(resolution));
+            }
+            // BeanPostProcessor that prepends our resolver to RequestMappingHandlerAdapter after
+            // the adapter completes afterPropertiesSet, so @Value on handler method params lands
+            // on our resolver first (both sources, plain or Supplier-shaped).
+            beanFactory.addBeanPostProcessor(new ArgumentResolverRegistrar(
+                    new ProfileAndConnectionValueArgumentResolver(resolution)));
+
             beanFactory.registerSingleton("agentExtension",
                     new FakeAgentExtension(profileName, properties, connectionProperties, webhook));
             if (controllerInstance != null) {
