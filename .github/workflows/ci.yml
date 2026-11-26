@@ -57,7 +57,7 @@ permissions:
 jobs:
   build:
     name: Build (JDK 21 + Ruby 3.4)
-    runs-on: k8s-ci-prod-medium
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -100,7 +100,7 @@ jobs:
 
   publish:
     name: Publish to GitHub Packages
-    runs-on: k8s-ci-prod-medium
+    runs-on: ubuntu-latest
 
     # Gate 1 — the build job must succeed. `needs:` implicitly requires it.
     needs: build
