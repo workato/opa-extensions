@@ -1,0 +1,5 @@
+extensions:
+  my-profile:
+    controller: com.workato.agent.extension.test.testext.EchoController
+    greeting: hello
+    custom-number: 42

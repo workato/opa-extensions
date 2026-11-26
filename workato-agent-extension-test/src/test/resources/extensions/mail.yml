@@ -1,0 +1,5 @@
+extensions:
+  mail:
+    controller: com.workato.agent.extension.test.testext.DottedKeyController
+    mail.pop3.username: alice
+    mail.pop3.password: s3cret

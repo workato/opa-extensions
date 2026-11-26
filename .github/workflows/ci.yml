@@ -1,0 +1,179 @@
+name: CI
+
+# ---------------------------------------------------------------------------
+# Triggers
+#   * pull_request          → build only
+#   * push to any branch     → build + SNAPSHOT publish to GitHub Packages
+#   * workflow_dispatch      → build + publish; `release: true` flips the
+#                              publish job from SNAPSHOT to a release
+#                              (-Prelease publish githubRelease)
+#
+# Publish is gated on build via `needs: build` — if tests fail, nothing is
+# uploaded to GitHub Packages and no GitHub Release is created.
+#
+# Credentials:
+#   GITHUB_TOKEN  — provided automatically by Actions. Used for BOTH
+#                   (a) publishing to GitHub Packages — injected as
+#                       ORG_GRADLE_PROJECT_githubToken so Gradle reads it via
+#                       its standard property lookup (root build.gradle
+#                       publishing.repositories.maven.credentials), and
+#                   (b) the `gh` CLI inside the githubRelease Gradle task.
+#   GITHUB_ACTOR  — provided automatically; injected as
+#                   ORG_GRADLE_PROJECT_githubActor (GitHub Packages requires
+#                   a username even though the token is what actually
+#                   authenticates).
+#
+# No repo-level secrets need to be configured for publishing — everything
+# comes from the auto-provided token. The workflow does require
+# `permissions: packages: write` below so the token is scoped to upload
+# packages for this repo.
+# ---------------------------------------------------------------------------
+
+on:
+  pull_request:
+  push:
+    branches: [ '**' ]
+    tags-ignore: [ '**' ]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Release build: publish to maven-releases + create a GitHub Release.'
+        type: boolean
+        default: false
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Required by:
+#   * `githubRelease` Gradle task — contents: write for `gh release create`
+#     (pushes a tag, uploads jars).
+#   * `publish` Gradle task — packages: write for GitHub Packages Maven upload.
+# Harmless for the build job.
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build:
+    name: Build (JDK 21 + Ruby 3.4)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1.329.0
+        with:
+          ruby-version: '3.4'
+          bundler-cache: false
+
+      - name: Cache Gradle
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Build
+        run: ./gradlew build --no-daemon --stacktrace
+
+      - name: Upload test reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-reports
+          path: |
+            **/build/reports/tests/
+            **/build/test-results/
+            **/src/main/ruby/**/tmp/
+          if-no-files-found: ignore
+
+  publish:
+    name: Publish to GitHub Packages
+    runs-on: ubuntu-latest
+
+    # Gate 1 — the build job must succeed. `needs:` implicitly requires it.
+    needs: build
+
+    # Gate 2 — never publish on a PR. PR commits are reviewed via the `build`
+    # job alone; only the branch tip push (and manual dispatch) land artifacts
+    # in GitHub Packages.
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+
+    env:
+      # Gradle-standard env → property mapping: ORG_GRADLE_PROJECT_<name>
+      # becomes `providers.gradleProperty('<name>')` at build time. GitHub
+      # Packages requires both a username (any valid GitHub login) and a
+      # token with write:packages — the auto-provided GITHUB_ACTOR +
+      # GITHUB_TOKEN pair satisfies both.
+      ORG_GRADLE_PROJECT_githubActor: ${{ github.actor }}
+      ORG_GRADLE_PROJECT_githubToken: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Cache Gradle
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      # Compute the Gradle -Pversion.suffix value here, not in build.gradle —
+      # GITHUB_REF_NAME and the dispatch input are both already in shell scope.
+      #
+      #   release (workflow_dispatch + release=true)  → suffix=""        → version 0.1.0
+      #   push / dispatch, master / main               → suffix=SNAPSHOT  → version 0.1.0-SNAPSHOT
+      #   push / dispatch, any other branch            → suffix=<sanitized-branch>-SNAPSHOT
+      #
+      # Sanitisation matches the Groovy regex in root build.gradle's auto-detect
+      # fallback so a local `git` build and a CI build agree on the version
+      # string for the same branch.
+      - name: Compute version suffix
+        id: ver
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.release }}" == "true" ]]; then
+            echo "suffix=" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref_name }}" == "master" || "${{ github.ref_name }}" == "main" ]]; then
+            echo "suffix=SNAPSHOT" >> "$GITHUB_OUTPUT"
+          else
+            sanitized=$(echo "${{ github.ref_name }}" \
+              | sed 's/[^A-Za-z0-9._-]/-/g' \
+              | tr -s '-' \
+              | sed 's/^-//; s/-$//')
+            echo "suffix=${sanitized}-SNAPSHOT" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish SNAPSHOT
+        # Push event, OR manual dispatch without the release flag.
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.release != true) }}
+        run: ./gradlew publish "-Pversion.suffix=${{ steps.ver.outputs.suffix }}" --no-daemon --stacktrace
+
+      - name: Publish release + GitHub Release
+        # Only a manual dispatch with release: true triggers a release. There
+        # is no automatic release path — every release is an explicit human
+        # action, deliberately. `-Pversion.suffix=` (empty value) is the
+        # explicit "release" signal to the version resolver in build.gradle.
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.release == true }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./gradlew publish githubRelease "-Pversion.suffix=${{ steps.ver.outputs.suffix }}" --no-daemon --stacktrace

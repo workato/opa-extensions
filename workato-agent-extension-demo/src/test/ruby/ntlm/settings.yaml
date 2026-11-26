@@ -1,0 +1,8 @@
+# TEST FIXTURE — fake credentials only. Never commit real NTLM credentials here;
+# the Workato SDK reads this file verbatim and passes the password over the wire
+# when the spec invokes the agent's /request endpoint.
+profile: ntlm
+username: testuser
+password: testpass
+domain: TESTDOMAIN
+workstation: WS01

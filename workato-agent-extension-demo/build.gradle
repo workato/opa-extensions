@@ -1,0 +1,289 @@
+plugins {
+    id 'java'
+}
+
+// Produce sources + javadoc jars next to the main shaded jar so the
+// GitHub Packages publication ships them as classifiers (`-sources`,
+// `-javadoc`). This module is a reference implementation; customers
+// cloning from it are the primary audience of the sources jar.
+java {
+    withSourcesJar()
+    withJavadocJar()
+}
+
+javadoc {
+    // Demo code carries inline Javadoc on the public types but no module-wide
+    // overview.html and no Xdoclint-strict discipline (there is no customer
+    // compiling against these classes — they drop the shaded jar into
+    // `lib_ext/`). `-Xdoclint:none` keeps the javadoc jar build friendly for
+    // a reference module where docs are a nice-to-have, not a contract.
+    options.addStringOption('Xdoclint:none', '-quiet')
+    options.encoding = 'UTF-8'
+}
+
+// Make everything in `compileOnly` also visible to the test classpath. Gradle
+// does NOT propagate compileOnly to tests by default, so without this the
+// AgentExtensionHarness tests would lose Spring/Jackson/Jakarta/SLF4J at test
+// runtime and fail with ClassNotFoundException.
+configurations {
+    testImplementation.extendsFrom compileOnly
+}
+
+dependencies {
+    // All dependency versions are pinned by the workato-agent-bom at
+    // libs/com/workato/agent/workato-agent-bom/0.1.0/workato-agent-bom-0.1.0.pom.
+    // Declare GAV without versions — the BOM supplies them. The only exception
+    // (Apache HttpClient 4) is called out below.
+    def bom = platform('com.workato.agent:workato-agent-bom:0.1.0')
+    compileOnly bom
+    implementation bom
+    testImplementation bom
+
+    // ---- Provided by the agent at runtime — compileOnly, NOT shaded ----
+    //
+    // extension-api is the API we compile against; the agent exposes it at
+    // runtime. Shading it would cause classloader conflicts (see
+    // ../workato-agent-extension-api/README.md — "do not shade it into your JAR").
+    compileOnly project(':workato-agent-extension-api')
+    testImplementation project(':workato-agent-extension-test')
+
+    // Spring, Jackson, Jakarta, SLF4J — the agent is itself a Spring app and
+    // provides all four stacks at runtime. We compile against them (every
+    // extension uses @RestController / @Value / @JsonProperty / @Inject /
+    // Logger), but packaging them would duplicate code the agent already has.
+    compileOnly 'org.springframework:spring-context'
+    compileOnly 'org.springframework:spring-webmvc'
+
+    // Jackson 2 — demos import `com.fasterxml.jackson.annotation.JsonProperty` (TimerExtension
+    // records). The agent runtime carries Jackson 2 alongside Jackson 3 for backward compat with
+    // customer DTOs built against the older namespace.
+    compileOnly 'com.fasterxml.jackson.core:jackson-annotations'
+    compileOnly 'com.fasterxml.jackson.core:jackson-databind'
+
+    compileOnly 'jakarta.servlet:jakarta.servlet-api'
+    compileOnly 'jakarta.inject:jakarta.inject-api'
+
+    compileOnly 'org.slf4j:slf4j-api'
+
+    // Apache HttpClient 4 — the agent still ships 4.x for legacy connectors (NtlmExtension
+    // imports org.apache.http.*). The BOM pins only HttpClient 5; keep 4.x hardcoded until
+    // NtlmExtension is migrated.
+    compileOnly 'org.apache.httpcomponents:httpclient:4.5.14'
+
+    // ---- Actually used by extension code — shaded into the fat jar ----
+    //
+    // Keep the comment next to each entry pointing at the one or two source
+    // files that reference the library, so a future reader can confirm the
+    // dependency is still needed before upgrading or dropping it.
+    implementation 'commons-codec:commons-codec'                // SecurityExtension — Hex
+    implementation 'org.apache.commons:commons-lang3'           // NtlmExtension, TimerExtension — StringUtils
+
+    testImplementation 'org.springframework:spring-test'
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+// ---------------------------------------------------------------------------
+// Fat jar — bundle every runtime dependency into build/libs/extension-demo-*.jar
+// so the deliverable is a single file that drops into the agent's lib_ext/.
+// extension-api is declared compileOnly above, so it is NOT on runtimeClasspath
+// and therefore is NOT shaded here — exactly as the API README requires
+// ("The API is compile-only / provided — do not shade it into your JAR. The
+//  agent provides it at runtime; shading would cause classloader conflicts").
+// ---------------------------------------------------------------------------
+jar {
+    // On CI we want duplicates to be LOUD (two libs both shipping e.g.
+    // META-INF/services/jakarta.servlet.ServletContainerInitializer is a classpath bug worth
+    // knowing about). Locally we silently drop duplicates — first-wins — so an interactive
+    // `./gradlew build` does not fail on a known-collision while the author is iterating.
+    duplicatesStrategy = (System.getenv('CI') == 'true' || project.hasProperty('ci'))
+            ? DuplicatesStrategy.WARN
+            : DuplicatesStrategy.EXCLUDE
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    // README.md lives at the module root (not under src/main/resources). Ship it
+    // into the jar so a downstream consumer can pluck it out of the artifact —
+    // same pattern as -api and -test.
+    from(projectDir) {
+        include 'README.md'
+    }
+    // Strip signatures from third-party JARs — otherwise the JVM rejects the
+    // merged archive on load with "SignatureException: invalid signature file digest".
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+}
+
+// Mirror the README into the javadoc jar so a Maven consumer that only pulls
+// the `-javadoc` classifier still sees the module overview — same pattern as
+// -api and -test.
+tasks.named('javadocJar') {
+    from(projectDir) {
+        include 'README.md'
+    }
+}
+
+// This module is explicitly a reference implementation — the Ruby custom
+// connectors under `src/main/ruby/` are as valuable to a cloner as the Java
+// code. Fold them into the sources jar under a top-level `ruby/` directory so
+// the published `-sources` classifier carries the complete reference bundle.
+tasks.named('sourcesJar') {
+    from('src/main/ruby') {
+        into 'ruby'
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ruby custom connectors — Workato SDK (workato-connector-sdk gem).
+// Each connector lives in its own self-contained SDK project under
+// src/main/ruby/<name>/. We run `bundle install` once per project, then
+// `bundle exec rspec` to execute the specs against pre-recorded VCR cassettes.
+// Hooks into `check` so the full build runs the Ruby suite alongside Java.
+// ---------------------------------------------------------------------------
+
+// Resolve `bundle` and (if using asdf) the matching ASDF_RUBY_VERSION so the
+// asdf shim resolves without a .tool-versions file in the repo. The Gemfile's
+// `ruby '~> 3.4.0'` is the floor; we auto-pick the highest installed 3.4.x
+// under ~/.asdf/installs/ruby/.
+//
+// Preference order for the bundle executable:
+//   1. BUNDLE_BIN env var — explicit override (set this on CI if needed).
+//   2. ~/.asdf/shims/bundle — if asdf is installed. We also compute the matching
+//      3.4.x and inject ASDF_RUBY_VERSION onto the Exec task's environment so
+//      the shim resolves without a .tool-versions file.
+//   3. plain `bundle` — fallback (whatever is first on PATH).
+def rubyEnv = {
+    def installs = new File("${System.getenv('HOME')}/.asdf/installs/ruby")
+    if (!installs.isDirectory()) return [:]
+    def candidates = installs.list()?.findAll { it ==~ /3\.4\.\d+/ } ?: []
+    if (candidates.isEmpty()) return [:]
+    def pick = candidates.sort(false) { a, b ->
+        def ap = a.tokenize('.').collect { it as int }
+        def bp = b.tokenize('.').collect { it as int }
+        [ap, bp].transpose().findResult(0) { x, y -> x <=> y ?: null }
+    }.last()
+    [ASDF_RUBY_VERSION: pick]
+}
+
+def bundleBin = {
+    def override = System.getenv('BUNDLE_BIN')
+    if (override && new File(override).isFile()) return override
+    // Prefer the asdf shim only when asdf also has a matching Ruby install —
+    // otherwise the shim fails with "no version set". Without a matching
+    // install, fall back to plain `bundle` from PATH (rbenv / chruby / system).
+    if (rubyEnv().containsKey('ASDF_RUBY_VERSION')) {
+        def shim = new File("${System.getenv('HOME')}/.asdf/shims/bundle")
+        if (shim.isFile()) return shim.absolutePath
+    }
+    'bundle'
+}
+
+// One shared Gemfile + Gemfile.lock live at src/test/ruby/; bundler walks
+// up from any subdir to find them, so a single `bundle install` serves every
+// connector project.
+task rubyBundleInstall(type: Exec) {
+    group = 'verification'
+    description = 'bundle install for the shared src/test/ruby/ Gemfile.'
+    workingDir file('src/test/ruby')
+    environment rubyEnv()
+    commandLine bundleBin(), 'install', '--quiet'
+}
+
+// `-Pspec=<filter>` forwards one example-selector to rspec:
+//   -Pspec='posts the payload'           → bundle exec rspec -e 'posts the payload'
+//   -Pspec=spec/connector_spec.rb:12     → bundle exec rspec spec/connector_spec.rb:12
+// Anything containing '/' or ':' is treated as a path (optionally with line);
+// otherwise as a description substring. No filter → the whole suite runs.
+def rspecCommand = { filter ->
+    def cmd = [bundleBin(), 'exec', 'rspec']
+    if (filter) {
+        def f = filter.toString()
+        cmd += (f.contains('/') || f.contains(':')) ? [f] : ['-e', f]
+    }
+    cmd
+}
+
+def rspecDescription = { connectorName ->
+    "RSpec for the ${connectorName} Workato connector. " +
+            'Filter one example: -Pspec="description substring" or -Pspec=spec/connector_spec.rb[:line].'
+}
+
+task securityRspec(type: Exec) {
+    group = 'verification'
+    description = rspecDescription('security')
+    dependsOn rubyBundleInstall
+    workingDir file('src/test/ruby/security')
+    environment rubyEnv()
+    commandLine rspecCommand(project.findProperty('spec'))
+}
+
+task ntlmRspec(type: Exec) {
+    group = 'verification'
+    description = rspecDescription('ntlm')
+    dependsOn rubyBundleInstall
+    workingDir file('src/test/ruby/ntlm')
+    environment rubyEnv()
+    commandLine rspecCommand(project.findProperty('spec'))
+}
+
+task timerRspec(type: Exec) {
+    group = 'verification'
+    description = rspecDescription('timer')
+    dependsOn rubyBundleInstall
+    workingDir file('src/test/ruby/timer')
+    environment rubyEnv()
+    commandLine rspecCommand(project.findProperty('spec'))
+}
+
+task testRubyConnectors {
+    group = 'verification'
+    description = 'Runs RSpec for every Ruby custom connector using VCR cassettes.'
+    dependsOn securityRspec, ntlmRspec, timerRspec
+}
+
+// Hook into both `test` and `check` so `./gradlew test` also runs the Ruby suite.
+// finalizedBy (not dependsOn) → Ruby runs after Java regardless of Java outcome,
+// so both failures are visible in one build.
+test.finalizedBy testRubyConnectors
+check.dependsOn testRubyConnectors
+
+// ---------------------------------------------------------------------------
+// Publication — the reference extension bundle.
+//
+// Three artifacts are published, all under the same GAV:
+//   - main jar    — the shaded fat jar (drop into agent `lib_ext/`).
+//   - -sources    — Java sources + Ruby connectors + README (reference material).
+//   - -javadoc    — javadoc HTML + README (IDE hover docs).
+//
+// We do NOT use `from components.java` because the main jar is a fat jar:
+// `components.java` would list every runtime dependency in the POM, which is
+// wrong when the fat jar already bundles them. Instead we declare the three
+// artifact tasks explicitly — the POM stays dependency-free and the
+// publication carries all three classifiers.
+//
+// This module is typically dropped into an agent `lib_ext/` directory rather
+// than pulled as a Maven dependency, but publishing sources + javadoc makes
+// it downloadable from GitHub Packages for ops / CI pipelines and for IDEs
+// that attach the `-sources` classifier for navigation.
+// ---------------------------------------------------------------------------
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            artifact tasks.named('jar')
+            artifact tasks.named('sourcesJar')
+            artifact tasks.named('javadocJar')
+
+            pom {
+                name = 'Workato Agent Extensions Demo'
+                description = 'Reference bundle of sample extensions (security, ntlm, timer) packaged as a single shaded jar.'
+                url = 'https://github.com/workato/opa-extensions'
+                packaging = 'jar'
+            }
+        }
+    }
+}

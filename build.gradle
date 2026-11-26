@@ -1,49 +1,301 @@
-plugins {
-    id 'java'
-    id 'groovy'
-    id 'application'
+// Root project — only shared configuration. Every module
+// (workato-agent-extension-api, workato-agent-extension-test,
+// workato-agent-extension-demo) lives in its own subdirectory with its own
+// build.gradle. This file sets Java version, repositories, and nothing else
+// about dependency versions — every pin lives in the BOM authored at
+// `libs/workato-agent-bom-0.1.0.xml`; settings.gradle materialises it into
+// `build/bom-repo/` in Maven-repo layout, and modules import it via
+// `platform('com.workato.agent:workato-agent-bom:0.1.0')`.
+
+// ---------------------------------------------------------------------------
+// Artifact version resolution.
+//
+//   Base version lives in gradle.properties (`version=0.1.0`) and is
+//   consumed as rootProject.version by Gradle automatically.
+//
+//   The `version.suffix` property is the lever that flips release ↔ SNAPSHOT.
+//   Precedence (highest wins):
+//
+//     1. -Pversion.suffix=XXX        → appended to the base version.
+//                                       XXX="SNAPSHOT"                  → 0.1.0-SNAPSHOT
+//                                       XXX="feature-foo-SNAPSHOT"      → 0.1.0-feature-foo-SNAPSHOT
+//                                       XXX=""  (property explicitly empty) → 0.1.0 (release)
+//     2. property NOT passed         → local git auto-detect
+//                                       master/main                      → "SNAPSHOT"
+//                                       any other branch                 → "<sanitized-branch>-SNAPSHOT"
+//                                       detached HEAD or git failure     → "SNAPSHOT" (safe default)
+//
+//   `.isPresent()` distinguishes "explicitly empty" (release, from CLI) from
+//   "not passed at all" (trigger auto-detect). CI always passes the flag —
+//   the auto-detect branch only fires on developer laptops.
+//
+//   The GitHub Packages Maven repo is a single URL that stores both SNAPSHOT
+//   and release versions — the `-SNAPSHOT` suffix on the Maven version is
+//   what tells consumers which semantics to apply, there is no second repo.
+// ---------------------------------------------------------------------------
+def autoDetectVersionSuffix = {
+    try {
+        def proc = new ProcessBuilder('git', 'rev-parse', '--abbrev-ref', 'HEAD')
+                .directory(rootProject.rootDir)
+                .redirectErrorStream(true)
+                .start()
+        if (!proc.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+            proc.destroyForcibly()
+            return 'SNAPSHOT'
+        }
+        def branch = proc.inputStream.text.trim()
+        if (proc.exitValue() != 0 || !branch || branch == 'HEAD' || branch in ['master', 'main']) {
+            return 'SNAPSHOT'
+        }
+        // Maven versions may not contain `/`, spaces, etc. — replace anything
+        // outside [A-Za-z0-9._-] with `-`, collapse consecutive dashes, trim
+        // leading/trailing dashes. Branch name is directly recoverable.
+        def sanitized = branch.replaceAll(/[^A-Za-z0-9._-]/, '-')
+                .replaceAll(/-+/, '-')
+                .replaceAll(/^-|-$/, '')
+        return "${sanitized}-SNAPSHOT"
+    } catch (Exception ignored) {
+        return 'SNAPSHOT'
+    }
 }
 
-sourceCompatibility = 17
-version = '0.2'
+def versionSuffixProvider = providers.gradleProperty('version.suffix')
+def versionSuffix = versionSuffixProvider.isPresent()
+        ? versionSuffixProvider.get()
+        : autoDetectVersionSuffix()
 
-project.ext {
-    springVersion = '6.0.9'
-    slf4jVersion = '2.0.6'
-    jacksonVersion = '2.15.1'
+// Compute the final version on rootProject exactly once, then propagate it to
+// every subproject explicitly in the `allprojects { }` block below. This
+// avoids relying on Gradle's implicit propagation of root `gradle.properties`
+// to subproject.version — which works for our single root-level
+// gradle.properties today, but silently drifts the moment any subproject
+// grows its own gradle.properties.
+if (versionSuffix) {
+    version = "${version}-${versionSuffix}"
 }
 
-repositories {
-    mavenLocal()
-    mavenCentral()
-    jcenter()
+allprojects {
+    group = 'com.workato.agent'
+    version = rootProject.version
+
+    repositories {
+        // Local Maven-layout repo that serves the workato-agent-bom. Populated by
+        // settings.gradle at init time from libs/workato-agent-bom-0.1.0.xml.
+        maven {
+            url = rootProject.file('build/bom-repo').toURI()
+        }
+        mavenCentral()
+    }
 }
 
-dependencies {
-    implementation "org.slf4j:slf4j-api:${slf4jVersion}"
-    implementation "org.slf4j:jcl-over-slf4j:${slf4jVersion}"
-    implementation "org.slf4j:jul-to-slf4j:${slf4jVersion}"
-    implementation "org.slf4j:log4j-over-slf4j:${slf4jVersion}"
+subprojects {
+    apply plugin: 'java'
+    apply plugin: 'maven-publish'
 
-    implementation "jakarta.servlet:jakarta.servlet-api:6.0.0"
-    implementation "jakarta.websocket:jakarta.websocket-api:2.1.0"
-    implementation "jakarta.validation:jakarta.validation-api:3.0.2"
-    implementation "jakarta.inject:jakarta.inject-api:2.0.1"
+    java {
+        sourceCompatibility = 21
+        targetCompatibility = 21
+        // Make Gradle enforce the compiler JDK, not just the bytecode target. On a developer
+        // laptop with a default JDK newer than 21 (25, 26, …) the setCompatibility pair above
+        // would silently let the build run under a newer compiler against the older bytecode
+        // level — fine in most cases, surprising when it isn't. CI already pins JDK 21
+        // explicitly; this line gives local builds the same guarantee.
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(21)
+        }
+    }
 
-    implementation "org.springframework:spring-context:${springVersion}"
-    implementation "org.springframework:spring-jdbc:${springVersion}"
-    implementation "org.springframework:spring-jms:${springVersion}"
-    implementation "org.springframework:spring-webmvc:${springVersion}"
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+    }
 
-    implementation "com.fasterxml.jackson.core:jackson-core:${jacksonVersion}"
-    implementation "com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}"
-    implementation "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:${jacksonVersion}"
+    tasks.withType(Test).configureEach {
+        testLogging {
+            events 'passed', 'skipped', 'failed'
+            exceptionFormat 'full'
+            showStandardStreams = false
+        }
+    }
 
-    implementation "commons-io:commons-io:2.11.0"
-    implementation "commons-codec:commons-codec:1.15"
-    implementation "net.sf.jopt-simple:jopt-simple:5.0.3"
-    implementation "org.apache.commons:commons-lang3:3.12.0"
-    implementation "org.apache.commons:commons-collections4:4.4"
-    implementation "org.apache.httpcomponents:httpclient:4.5.14"
+    // ---------------------------------------------------------------------------------------
+    // Dependency locking — pin the full transitive graph per subproject so the resolved
+    // versions are reproducible across builds and visible in review (closes
+    // boostsecurity-io-ai "CI/CD - Missing Lockfile" finding on every build.gradle).
+    //
+    // The BOM already pins direct versions; locking adds cryptographic pinning for the
+    // transitive closure Gradle walks on top of that. Regenerate the lockfiles after any
+    // BOM bump or dependency add/remove:
+    //
+    //   ./gradlew resolveAndLockAll --write-locks
+    //
+    // The `resolveAndLockAll` task below resolves every lockable configuration in one shot so
+    // one invocation refreshes all lockfiles under src/… and build.gradle for every module.
+    // ---------------------------------------------------------------------------------------
+    dependencyLocking {
+        lockAllConfigurations()
+    }
+
+    tasks.register('resolveAndLockAll') {
+        group = 'help'
+        description = 'Resolves every lockable configuration so `--write-locks` rewrites gradle.lockfile end-to-end.'
+        notCompatibleWithConfigurationCache(
+                'Resolves configurations at execution time to force lock file refresh — required for --write-locks.')
+        doFirst {
+            assert gradle.startParameter.writeDependencyLocks:
+                    'Run with --write-locks, e.g. `./gradlew resolveAndLockAll --write-locks`.'
+        }
+        doLast {
+            configurations.findAll { it.canBeResolved }.each { it.resolve() }
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Publishing — GitHub Packages (Maven), scoped to this repo.
+    //
+    // GitHub Packages serves a single Maven URL per repository; SNAPSHOT vs. release is
+    // signalled solely by the Maven version string (`-SNAPSHOT` suffix). Repository URL:
+    //
+    //   https://maven.pkg.github.com/workato/opa-extensions
+    //
+    // Per-module publications (what goes *into* each publication — jar + sources + javadoc for
+    // libraries, shaded jar for the demo) are declared in each module's own build.gradle. The
+    // only workspace-wide concerns here are (a) where to publish and (b) credentials.
+    //
+    // Credentials: `githubActor` / `githubToken` — read via the standard Gradle property
+    // lookup (CLI flag, ~/.gradle/gradle.properties, or ORG_GRADLE_PROJECT_* env var). In CI
+    // we inject the auto-provided GITHUB_ACTOR + GITHUB_TOKEN; locally, generate a classic
+    // PAT with `write:packages` (publish) or `read:packages` (consume) and put it in
+    // ~/.gradle/gradle.properties. Both `.orNull` so builds that never call `publish` do not
+    // fail for lack of credentials.
+    // ---------------------------------------------------------------------------------------
+    publishing {
+        repositories {
+            maven {
+                name = 'GitHubPackages'
+                url = uri('https://maven.pkg.github.com/workato/opa-extensions')
+                credentials {
+                    username = providers.gradleProperty('githubActor').orNull
+                    password = providers.gradleProperty('githubToken').orNull
+                }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Published POMs are self-contained — consumers must not need the
+    // workato-agent-bom to resolve our artifacts (the BOM is a build-time
+    // internal and is not published anywhere).
+    //
+    // Three steps, applied to every MavenPublication the subproject produces:
+    //
+    //   1. versionMapping — bakes the actual runtime-resolved version onto
+    //      every <dependency> in the generated POM. Without this, Gradle
+    //      writes deps with no <version>, relying on a BOM import to pin
+    //      them — which breaks for any consumer who cannot resolve the BOM.
+    //
+    //   2. pom.withXml — strips the <dependencyManagement> section
+    //      (= the `platform(...)` BOM import that Gradle leaves behind by
+    //      default). After step 1 every dep already carries a version, so
+    //      the import is redundant; keeping it would make consumers chase
+    //      a BOM GAV that is not in any public repository.
+    //
+    //   3. Disable Gradle Module Metadata (`*.module`). Steps 1+2 only touch
+    //      the POM; the sibling `.module` file keeps the `api platform(...)`
+    //      declarations as a BOM constraint, and Gradle-native consumers
+    //      prefer `.module` over POM when both exist — so without this step
+    //      a Gradle consumer still tries to resolve `workato-agent-bom` and
+    //      fails with a 404. We only publish POM; variant-aware resolution
+    //      is lost for Gradle-native consumers, which for plain Java libs
+    //      is a non-issue.
+    //
+    // Applied via configureEach + afterEvaluate so the hook fires regardless
+    // of the order in which each module registers its publication.
+    // ---------------------------------------------------------------------------------------
+    tasks.withType(GenerateModuleMetadata).configureEach { enabled = false }
+
+    afterEvaluate {
+        publishing.publications.withType(MavenPublication).configureEach {
+            versionMapping {
+                usage('java-api') { fromResolutionOf('runtimeClasspath') }
+                usage('java-runtime') { fromResolutionResult() }
+            }
+            pom.withXml {
+                def root = asNode()
+                root['dependencyManagement'].each { root.remove(it) }
+            }
+        }
+    }
 }
 
+// ---------------------------------------------------------------------------
+// githubRelease — attach the built jars to a GitHub Release.
+//
+// Runs `gh release create v<version> <artifact>...` for the current version:
+//   * Only runs for release versions (version does NOT end in -SNAPSHOT) —
+//     SNAPSHOT builds never create a GitHub Release, per workspace policy.
+//     A release is produced by passing `-Pversion.suffix=` (empty) or any
+//     non-SNAPSHOT suffix.
+//   * Requires `gh` CLI on PATH and an authenticated session (`gh auth status`
+//     locally, GH_TOKEN env in CI).
+//   * Depends on every subproject's `assemble` so the jars exist when the
+//     task runs. Chain with `publish` to upload to GitHub Packages too:
+//
+//       ./gradlew publish githubRelease -Pversion.suffix=
+//
+//     First phase uploads to GitHub Packages; second phase creates the
+//     GitHub Release and attaches the same jars.
+//
+// Tag handling: `gh release create` creates the tag on the current commit if
+// it does not exist. We intentionally do NOT push a tag from Gradle — the
+// developer (or CI) should confirm they are on the right commit before
+// running.
+// ---------------------------------------------------------------------------
+tasks.register('githubRelease') {
+    group = 'publishing'
+    description = 'Creates a GitHub Release v<version> and attaches every module\'s built jars. ' +
+            'Requires a non-SNAPSHOT version and `gh` CLI authenticated.'
+
+    dependsOn subprojects.collect { it.tasks.named('assemble') }
+
+    doFirst {
+        if (version.toString().endsWith('-SNAPSHOT')) {
+            throw new GradleException(
+                    "githubRelease requires a release version (current=${version}). " +
+                            'Pass -Pversion.suffix= for an explicit release build; SNAPSHOT builds publish to GitHub Packages only.')
+        }
+        def gh = ['sh', '-c', 'command -v gh'].execute()
+        gh.waitFor()
+        if (gh.exitValue() != 0) {
+            throw new GradleException(
+                    'githubRelease needs the GitHub CLI (`gh`). Install from https://cli.github.com/ ' +
+                            'and run `gh auth login`.')
+        }
+    }
+
+    doLast {
+        def artifacts = subprojects.collectMany { sp ->
+            def libs = sp.file('build/libs')
+            libs.isDirectory() ? libs.listFiles().findAll { it.name.endsWith('.jar') } : []
+        }
+        if (artifacts.isEmpty()) {
+            throw new GradleException('No build/libs/*.jar artifacts found — run `./gradlew assemble` first.')
+        }
+
+        def tag = "v${version}"
+        def title = "Workato Agent Extensions ${version}"
+
+        // --generate-notes asks GitHub to compose release notes from the
+        // commit range since the previous tag — richer than anything we would
+        // hand-craft here, and the mechanism the rest of the org already uses.
+        def cmd = ['gh', 'release', 'create', tag,
+                   '--title', title,
+                   '--generate-notes']
+        cmd.addAll(artifacts*.absolutePath)
+
+        logger.lifecycle("Creating GitHub Release ${tag} with ${artifacts.size()} artifact(s)…")
+        def proc = new ProcessBuilder(cmd).inheritIO().directory(rootProject.rootDir).start()
+        if (proc.waitFor() != 0) {
+            throw new GradleException("`gh release create` exited with status ${proc.exitValue()}.")
+        }
+    }
+}
