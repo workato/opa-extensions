@@ -83,8 +83,8 @@ test {
 // Publication — the test harness library.
 //
 // Same shape as the -api module: main jar + sources + javadoc, wired from the
-// `java` software component. Nexus repository and credentials come from the
-// workspace-wide publishing block in root build.gradle.
+// `java` software component. GitHub Packages repository and credentials come
+// from the workspace-wide publishing block in root build.gradle.
 // ---------------------------------------------------------------------------
 publishing {
     publications {

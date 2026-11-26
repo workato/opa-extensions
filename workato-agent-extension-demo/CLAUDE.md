@@ -18,8 +18,12 @@ custom connectors that talk to them. Exists for two reasons:
    `src/main/java/com/workato/agent/extension/demo/<name>/`, follow the six-step
    development workflow in `README.md`, and ship.
 
-This module is **not** published to Nexus — only `workato-agent-extension-api`
-and `workato-agent-extension-test` are (future work).
+This module is published to GitHub Packages alongside
+`workato-agent-extension-api` and `workato-agent-extension-test`, but its
+intended delivery path is different: customers typically drop the shaded
+fat jar into an agent `lib_ext/` directory rather than pulling it as a
+Maven dependency. The `-sources` / `-javadoc` classifiers are published so
+IDEs can attach them for navigation.
 
 ## Authoritative docs — read before coding
 

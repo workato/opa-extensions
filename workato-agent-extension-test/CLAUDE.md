@@ -4,8 +4,8 @@
 > (`~/Projects/opa/modules/extension-test/`) into the standalone
 > `opa-extensions` workspace. Cross-references below to `modules/agent-core/…`
 > or `modules/agent-launcher/…` point into the OPA repo (`~/Projects/opa/`),
-> which consumes this module as a published artifact (Nexus publishing is
-> future work — see root `CLAUDE.md`).
+> which consumes this module as a published artifact (published to GitHub
+> Packages — see root `CLAUDE.md`).
 
 Test-time module shipping two complementary tools for agent extensions:
 

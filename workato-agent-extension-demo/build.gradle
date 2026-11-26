@@ -2,10 +2,10 @@ plugins {
     id 'java'
 }
 
-// Produce sources + javadoc jars next to the main shaded jar so the Nexus
-// publication ships them as classifiers (`-sources`, `-javadoc`). This module
-// is a reference implementation; customers cloning from it are the primary
-// audience of the sources jar.
+// Produce sources + javadoc jars next to the main shaded jar so the
+// GitHub Packages publication ships them as classifiers (`-sources`,
+// `-javadoc`). This module is a reference implementation; customers
+// cloning from it are the primary audience of the sources jar.
 java {
     withSourcesJar()
     withJavadocJar()
@@ -268,8 +268,8 @@ check.dependsOn testRubyConnectors
 //
 // This module is typically dropped into an agent `lib_ext/` directory rather
 // than pulled as a Maven dependency, but publishing sources + javadoc makes
-// it downloadable from Nexus for ops / CI pipelines and for IDEs that attach
-// the `-sources` classifier for navigation.
+// it downloadable from GitHub Packages for ops / CI pipelines and for IDEs
+// that attach the `-sources` classifier for navigation.
 // ---------------------------------------------------------------------------
 publishing {
     publications {

@@ -29,8 +29,9 @@
 //   "not passed at all" (trigger auto-detect). CI always passes the flag —
 //   the auto-detect branch only fires on developer laptops.
 //
-//   Nexus repo URL is picked by the final version's `-SNAPSHOT` suffix, so
-//   SNAPSHOTs → maven-snapshots, release → maven-releases. No other switch.
+//   The GitHub Packages Maven repo is a single URL that stores both SNAPSHOT
+//   and release versions — the `-SNAPSHOT` suffix on the Maven version is
+//   what tells consumers which semantics to apply, there is no second repo.
 // ---------------------------------------------------------------------------
 def autoDetectVersionSuffix = {
     try {
@@ -149,31 +150,32 @@ subprojects {
     }
 
     // ---------------------------------------------------------------------------------------
-    // Publishing — Workato corporate Nexus.
+    // Publishing — GitHub Packages (Maven), scoped to this repo.
     //
-    // Repository URL is picked by version suffix (same convention as data-pipeline-common):
-    //   *-SNAPSHOT          → …/repository/maven-snapshots
-    //   anything else        → …/repository/maven-releases
+    // GitHub Packages serves a single Maven URL per repository; SNAPSHOT vs. release is
+    // signalled solely by the Maven version string (`-SNAPSHOT` suffix). Repository URL:
+    //
+    //   https://maven.pkg.github.com/workato/opa-extensions
     //
     // Per-module publications (what goes *into* each publication — jar + sources + javadoc for
     // libraries, shaded jar for the demo) are declared in each module's own build.gradle. The
     // only workspace-wide concerns here are (a) where to publish and (b) credentials.
     //
-    // Credentials: `nexusUsername` / `nexusPassword` — read from gradle properties (CLI flag,
-    // ~/.gradle/gradle.properties, or ORG_GRADLE_PROJECT_* env var — the standard Gradle
-    // lookup order). Both `.orNull` so the build does not fail just because a developer who
-    // only runs `./gradlew build` locally has no credentials.
+    // Credentials: `githubActor` / `githubToken` — read via the standard Gradle property
+    // lookup (CLI flag, ~/.gradle/gradle.properties, or ORG_GRADLE_PROJECT_* env var). In CI
+    // we inject the auto-provided GITHUB_ACTOR + GITHUB_TOKEN; locally, generate a classic
+    // PAT with `write:packages` (publish) or `read:packages` (consume) and put it in
+    // ~/.gradle/gradle.properties. Both `.orNull` so builds that never call `publish` do not
+    // fail for lack of credentials.
     // ---------------------------------------------------------------------------------------
     publishing {
         repositories {
             maven {
-                name = 'WorkatoNexus'
-                url = version.toString().endsWith('-SNAPSHOT')
-                        ? uri('https://nexus.infra.wktodev.net/repository/maven-snapshots')
-                        : uri('https://nexus.infra.wktodev.net/repository/maven-releases')
+                name = 'GitHubPackages'
+                url = uri('https://maven.pkg.github.com/workato/opa-extensions')
                 credentials {
-                    username = providers.gradleProperty('nexusUsername').orNull
-                    password = providers.gradleProperty('nexusPassword').orNull
+                    username = providers.gradleProperty('githubActor').orNull
+                    password = providers.gradleProperty('githubToken').orNull
                 }
             }
         }
@@ -225,11 +227,11 @@ subprojects {
 //   * Requires `gh` CLI on PATH and an authenticated session (`gh auth status`
 //     locally, GH_TOKEN env in CI).
 //   * Depends on every subproject's `assemble` so the jars exist when the
-//     task runs. Chain with `publish` to upload to Nexus too:
+//     task runs. Chain with `publish` to upload to GitHub Packages too:
 //
 //       ./gradlew publish githubRelease -Pversion.suffix=
 //
-//     First phase uploads to Nexus `maven-releases`; second phase creates the
+//     First phase uploads to GitHub Packages; second phase creates the
 //     GitHub Release and attaches the same jars.
 //
 // Tag handling: `gh release create` creates the tag on the current commit if
@@ -248,7 +250,7 @@ tasks.register('githubRelease') {
         if (version.toString().endsWith('-SNAPSHOT')) {
             throw new GradleException(
                     "githubRelease requires a release version (current=${version}). " +
-                            'Pass -Pversion.suffix= for an explicit release build; SNAPSHOT builds publish to Nexus only.')
+                            'Pass -Pversion.suffix= for an explicit release build; SNAPSHOT builds publish to GitHub Packages only.')
         }
         def gh = ['sh', '-c', 'command -v gh'].execute()
         gh.waitFor()

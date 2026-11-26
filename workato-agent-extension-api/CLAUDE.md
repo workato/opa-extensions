@@ -6,8 +6,8 @@ Public API that customer-developed agent extensions compile against.
 > (`~/Projects/opa/modules/extension-api/`) into the standalone
 > `opa-extensions` workspace. Cross-references below to `modules/agent-core/…`
 > or `modules/agent-launcher/…` point into the OPA repo (`~/Projects/opa/`),
-> which consumes this module as a published artifact (Nexus publishing is
-> future work — see root `CLAUDE.md`).
+> which consumes this module as a published artifact (published to GitHub
+> Packages — see root `CLAUDE.md`).
 
 > **Companion customer-facing doc: `README.md` in this directory.**
 > This CLAUDE.md is the *maintainer* view (invariants, implementation seams,

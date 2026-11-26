@@ -3,25 +3,30 @@ name: CI
 # ---------------------------------------------------------------------------
 # Triggers
 #   * pull_request          → build only
-#   * push to any branch     → build + SNAPSHOT publish to Nexus
+#   * push to any branch     → build + SNAPSHOT publish to GitHub Packages
 #   * workflow_dispatch      → build + publish; `release: true` flips the
 #                              publish job from SNAPSHOT to a release
 #                              (-Prelease publish githubRelease)
 #
 # Publish is gated on build via `needs: build` — if tests fail, nothing is
-# uploaded to Nexus and no GitHub Release is created.
+# uploaded to GitHub Packages and no GitHub Release is created.
 #
-# Secrets (GitHub repo → Settings → Secrets and variables → Actions):
-#   NEXUS_USERNAME / NEXUS_PASSWORD  — Workato Nexus credentials.
-#                                       Injected as
-#                                       ORG_GRADLE_PROJECT_nexusUsername /
-#                                       ORG_GRADLE_PROJECT_nexusPassword so
-#                                       Gradle reads them via its standard
-#                                       property lookup (root build.gradle
-#                                       publishing.repositories.maven.credentials).
-#   GITHUB_TOKEN                      — provided automatically; consumed by
-#                                       the `gh` CLI inside the githubRelease
-#                                       Gradle task.
+# Credentials:
+#   GITHUB_TOKEN  — provided automatically by Actions. Used for BOTH
+#                   (a) publishing to GitHub Packages — injected as
+#                       ORG_GRADLE_PROJECT_githubToken so Gradle reads it via
+#                       its standard property lookup (root build.gradle
+#                       publishing.repositories.maven.credentials), and
+#                   (b) the `gh` CLI inside the githubRelease Gradle task.
+#   GITHUB_ACTOR  — provided automatically; injected as
+#                   ORG_GRADLE_PROJECT_githubActor (GitHub Packages requires
+#                   a username even though the token is what actually
+#                   authenticates).
+#
+# No repo-level secrets need to be configured for publishing — everything
+# comes from the auto-provided token. The workflow does require
+# `permissions: packages: write` below so the token is scoped to upload
+# packages for this repo.
 # ---------------------------------------------------------------------------
 
 on:
@@ -40,10 +45,14 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Required by the `githubRelease` Gradle task (gh release create pushes a tag
-# and creates the release). Harmless for the build job.
+# Required by:
+#   * `githubRelease` Gradle task — contents: write for `gh release create`
+#     (pushes a tag, uploads jars).
+#   * `publish` Gradle task — packages: write for GitHub Packages Maven upload.
+# Harmless for the build job.
 permissions:
   contents: write
+  packages: write
 
 jobs:
   build:
@@ -90,7 +99,7 @@ jobs:
           if-no-files-found: ignore
 
   publish:
-    name: Publish to Nexus
+    name: Publish to GitHub Packages
     runs-on: k8s-ci-prod-medium
 
     # Gate 1 — the build job must succeed. `needs:` implicitly requires it.
@@ -98,14 +107,17 @@ jobs:
 
     # Gate 2 — never publish on a PR. PR commits are reviewed via the `build`
     # job alone; only the branch tip push (and manual dispatch) land artifacts
-    # in Nexus.
+    # in GitHub Packages.
     if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
 
     env:
       # Gradle-standard env → property mapping: ORG_GRADLE_PROJECT_<name>
-      # becomes `providers.gradleProperty('<name>')` at build time.
-      ORG_GRADLE_PROJECT_nexusUsername: ${{ secrets.NEXUS_USERNAME }}
-      ORG_GRADLE_PROJECT_nexusPassword: ${{ secrets.NEXUS_PASSWORD }}
+      # becomes `providers.gradleProperty('<name>')` at build time. GitHub
+      # Packages requires both a username (any valid GitHub login) and a
+      # token with write:packages — the auto-provided GITHUB_ACTOR +
+      # GITHUB_TOKEN pair satisfies both.
+      ORG_GRADLE_PROJECT_githubActor: ${{ github.actor }}
+      ORG_GRADLE_PROJECT_githubToken: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout
