@@ -186,7 +186,7 @@ subprojects {
     // workato-agent-bom to resolve our artifacts (the BOM is a build-time
     // internal and is not published anywhere).
     //
-    // Two steps, applied to every MavenPublication the subproject produces:
+    // Three steps, applied to every MavenPublication the subproject produces:
     //
     //   1. versionMapping — bakes the actual runtime-resolved version onto
     //      every <dependency> in the generated POM. Without this, Gradle
@@ -199,9 +199,20 @@ subprojects {
     //      the import is redundant; keeping it would make consumers chase
     //      a BOM GAV that is not in any public repository.
     //
+    //   3. Disable Gradle Module Metadata (`*.module`). Steps 1+2 only touch
+    //      the POM; the sibling `.module` file keeps the `api platform(...)`
+    //      declarations as a BOM constraint, and Gradle-native consumers
+    //      prefer `.module` over POM when both exist — so without this step
+    //      a Gradle consumer still tries to resolve `workato-agent-bom` and
+    //      fails with a 404. We only publish POM; variant-aware resolution
+    //      is lost for Gradle-native consumers, which for plain Java libs
+    //      is a non-issue.
+    //
     // Applied via configureEach + afterEvaluate so the hook fires regardless
     // of the order in which each module registers its publication.
     // ---------------------------------------------------------------------------------------
+    tasks.withType(GenerateModuleMetadata).configureEach { enabled = false }
+
     afterEvaluate {
         publishing.publications.withType(MavenPublication).configureEach {
             versionMapping {

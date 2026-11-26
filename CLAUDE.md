@@ -227,20 +227,27 @@ Missing credentials surface as a 401 on dependency resolution.
 
 **Published POMs are self-contained.** The `workato-agent-bom` is a
 build-time-internal artifact — it pins versions across subprojects at
-compile time and is NOT published to any repository. To make published
-POMs resolvable without the BOM, root `build.gradle` configures every
-`MavenPublication` with:
+compile time and is NOT published to any repository. To make our published
+artifacts resolvable without the BOM, root `build.gradle` configures every
+`MavenPublication` with three measures:
 
 1. `versionMapping` — bakes the runtime-resolved version onto every
    `<dependency>` in the generated POM (instead of leaving deps without a
    `<version>` and relying on a BOM import to pin them).
 2. `pom.withXml` — strips the `<dependencyManagement>` section that
    `platform(...)` would otherwise leave in the POM.
+3. **Gradle Module Metadata (`*.module`) publication is disabled**
+   (`tasks.withType(GenerateModuleMetadata).configureEach { enabled = false }`).
+   Steps 1+2 only sanitise the POM; `.module` keeps the `api platform(...)`
+   calls as a BOM constraint, and Gradle-native consumers prefer `.module`
+   over POM when both exist — so without this step a Gradle consumer still
+   tries to resolve `workato-agent-bom` and fails with a 404 from GitHub
+   Packages. Trade-off: Gradle-native consumers lose variant-aware
+   resolution, which for plain Java libraries almost never matters.
 
-Result: a Maven or Gradle consumer resolves our artifacts straight from
-`com.workato.agent:*:<version>` without ever needing `workato-agent-bom`.
-Gradle metadata (`.module`) still carries the full dependency graph for
-Gradle-native consumers; the POM stays the Maven-compatible fallback.
+Result: every consumer — Maven or Gradle — resolves our artifacts straight
+from `com.workato.agent:*:<version>` using the POM alone, without ever
+touching `workato-agent-bom`.
 
 ### Credentials
 
